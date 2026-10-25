@@ -154,6 +154,7 @@ export default function EvidenceDetails() {
   }, [verifyMutation.isPending]);
 
   const evidence = data?.data;
+  const canViewImage = user?.role === 'admin' || user?.role === 'super_admin';
 
   if (isLoading) {
     return (
@@ -215,7 +216,7 @@ export default function EvidenceDetails() {
     );
   }
 
-  const fileUrl = evidence.fileContent ? `data:${evidence.mimeType};base64,${evidence.fileContent}` : '';
+  const fileUrl = canViewImage && evidence.fileContent ? `data:${evidence.mimeType};base64,${evidence.fileContent}` : '';
   const chainStatus = evidence.blockchainStatus || (evidence.blockchainTxHash ? 'confirmed' : 'not_requested');
   const storageStatus = evidence.storageStatus || (evidence.ipfsCID ? 'ipfs' : 'not_stored');
   const isPreviewable = Boolean(
@@ -246,7 +247,7 @@ export default function EvidenceDetails() {
             </>
           }
           actions={
-            fileUrl ? (
+            canViewImage && fileUrl ? (
               <a href={fileUrl} download={evidence.fileName} className="btn-primary">
                 <Download size={15} />
                 Download
@@ -258,7 +259,7 @@ export default function EvidenceDetails() {
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
         <div className="space-y-5">
-          {isPreviewable ? (
+          {canViewImage && isPreviewable ? (
             <section className="panel overflow-hidden">
               <div className="card-header">
                 <div className="flex items-center gap-3">
@@ -285,6 +286,14 @@ export default function EvidenceDetails() {
                     <p className="mt-1 text-[12px] text-ink-muted">Download to view the full document.</p>
                   </div>
                 )}
+              </div>
+            </section>
+          ) : !canViewImage ? (
+            <section className="panel flex items-center gap-3 p-4">
+              <FileTypeIcon mimeType={evidence.mimeType} fileName={evidence.fileName} size="sm" />
+              <div>
+                <h2 className="section-title">Image details</h2>
+                <p className="section-subtitle">The original image is not displayed in the user interface.</p>
               </div>
             </section>
           ) : null}

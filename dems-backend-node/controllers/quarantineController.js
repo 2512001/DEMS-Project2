@@ -57,7 +57,8 @@ const getQuarantineById = async (req, res, next) => {
             return res.status(403).json({ success: false, message: 'You are not authorized to access this evidence.' });
         }
 
-        const buffer = readQuarantineFile(record.temporaryStorageReference);
+        const canReviewImage = isOrgAdmin;
+        const buffer = canReviewImage ? readQuarantineFile(record.temporaryStorageReference) : null;
         await writeAuditLog({
             actor: req.user,
             organizationId: record.organizationId,
@@ -70,7 +71,7 @@ const getQuarantineById = async (req, res, next) => {
             success: true,
             data: {
                 ...publicQuarantine(record),
-                fileContent: buffer.toString('base64')
+                ...(buffer ? { fileContent: buffer.toString('base64') } : {})
             }
         });
     } catch (err) {

@@ -87,7 +87,7 @@ app.use((err, req, res, next) => {
     }
 
     const status = err.statusCode || 500;
-    const isUploadError = err.message === 'Unsupported file type.' || err.code === 'LIMIT_FILE_SIZE';
+    const isUploadError = err.message === 'Unsupported file type.' || err.code === 'LIMIT_FILE_SIZE' || err.code === 'UNSUPPORTED_IMAGE_TYPE';
     res.status(isUploadError ? 400 : status).json({
         success: false,
         message: isUploadError

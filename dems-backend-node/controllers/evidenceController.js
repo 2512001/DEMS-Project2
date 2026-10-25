@@ -9,6 +9,7 @@ const { getOnChainEvidence, evidenceExists } = require('../services/blockchainSe
 const { canAccessEvidence, isAdmin, isEmployee, isEvidenceOwner, httpError } = require('../services/accessControl');
 const { writeAuditLog } = require('../services/auditService');
 const { getOrganizationPolicy } = require('../services/organizationService');
+const { validateEvidenceImageType } = require('../services/imageValidationService');
 
 const getFileBuffer = (file) => {
     if (file.buffer) return file.buffer;
@@ -32,6 +33,11 @@ const uploadEvidence = async (req, res, next) => {
         }
 
         const fileBuffer = getFileBuffer(req.file);
+        const imageValidation = validateEvidenceImageType(fileBuffer, req.file.mimetype, req.file.originalname);
+        if (!imageValidation.valid) {
+            return res.status(400).json({ success: false, message: imageValidation.reason });
+        }
+        req.file.mimetype = imageValidation.mimeType;
         const uploadBody = { ...req.body };
         
         // Make caseId optional - allow uploads without caseId
@@ -229,8 +235,9 @@ const getEvidenceById = async (req, res, next) => {
             ipfsCID: evidence.ipfsCID
         });
 
+        const canReviewImage = isAdmin(req.user);
         let fileContent = null;
-        if (evidence.ipfsCID && evidence.encryption?.iv && evidence.encryption?.authTag) {
+        if (canReviewImage && evidence.ipfsCID && evidence.encryption?.iv && evidence.encryption?.authTag) {
             try {
                 const encryptedBuffer = await fetchEncryptedBlobFromIpfs(evidence.ipfsCID);
                 const originalBuffer = decryptFile(encryptedBuffer, evidence.encryption);
@@ -252,6 +259,7 @@ const getEvidenceById = async (req, res, next) => {
 
         const evidencePayload = evidence.toObject();
         delete evidencePayload.encryption;
+        delete evidencePayload.encryptedDEKs;
 
         const payload = blockchainPayload(evidence);
         console.log('[Backend Evidence Diagnostics] Blockchain payload:', {
@@ -264,7 +272,7 @@ const getEvidenceById = async (req, res, next) => {
             success: true,
             data: {
                 ...evidencePayload,
-                fileContent,
+                ...(canReviewImage ? { fileContent } : {}),
                 blockchainPayload: (evidence.blockchainStatus === 'pending' || evidence.blockchainStatus === 'failed') && evidence.ipfsCID
                     ? payload
                     : null
@@ -296,7 +304,7 @@ const getEvidenceByCase = async (req, res, next) => {
         }
 
         const evidence = await EvidenceModel.find(filter)
-            .select('-encryption')
+            .select('-encryption -encryptedDEKs')
             .sort({ createdAt: -1 });
 
         return res.status(200).json({ success: true, count: evidence.length, data: evidence });

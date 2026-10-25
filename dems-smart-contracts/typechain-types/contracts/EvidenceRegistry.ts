@@ -42,16 +42,20 @@ export interface EvidenceRegistryInterface extends Interface {
     nameOrSignature:
       | "DEFAULT_ADMIN_ROLE"
       | "OFFICER_ROLE"
+      | "REGISTRAR_ROLE"
       | "addCustodyEvent"
       | "addEvidence"
+      | "addEvidenceByRegistrar"
       | "evidenceExists"
       | "getCustodyHistory"
       | "getEvidence"
       | "getRoleAdmin"
       | "getUploaderEvidenceCount"
       | "grantOfficer"
+      | "grantRegistrar"
       | "grantRole"
       | "hasOfficerRole"
+      | "hasRegistrarRole"
       | "hasRole"
       | "renounceRole"
       | "revokeOfficer"
@@ -67,6 +71,7 @@ export interface EvidenceRegistryInterface extends Interface {
       | "EvidenceVerified"
       | "OfficerGranted"
       | "OfficerRevoked"
+      | "RegistrarGranted"
       | "RoleAdminChanged"
       | "RoleGranted"
       | "RoleRevoked"
@@ -81,11 +86,19 @@ export interface EvidenceRegistryInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(
+    functionFragment: "REGISTRAR_ROLE",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
     functionFragment: "addCustodyEvent",
     values: [string, string]
   ): string;
   encodeFunctionData(
     functionFragment: "addEvidence",
+    values: [string, string, string, BigNumberish, AddressLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "addEvidenceByRegistrar",
     values: [string, string, string, BigNumberish, AddressLike]
   ): string;
   encodeFunctionData(
@@ -110,11 +123,19 @@ export interface EvidenceRegistryInterface extends Interface {
     values: [AddressLike]
   ): string;
   encodeFunctionData(
+    functionFragment: "grantRegistrar",
+    values: [AddressLike]
+  ): string;
+  encodeFunctionData(
     functionFragment: "grantRole",
     values: [BytesLike, AddressLike]
   ): string;
   encodeFunctionData(
     functionFragment: "hasOfficerRole",
+    values: [AddressLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "hasRegistrarRole",
     values: [AddressLike]
   ): string;
   encodeFunctionData(
@@ -151,11 +172,19 @@ export interface EvidenceRegistryInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
+    functionFragment: "REGISTRAR_ROLE",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
     functionFragment: "addCustodyEvent",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
     functionFragment: "addEvidence",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "addEvidenceByRegistrar",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -182,9 +211,17 @@ export interface EvidenceRegistryInterface extends Interface {
     functionFragment: "grantOfficer",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(
+    functionFragment: "grantRegistrar",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "grantRole", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "hasOfficerRole",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "hasRegistrarRole",
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "hasRole", data: BytesLike): Result;
@@ -332,6 +369,28 @@ export namespace OfficerRevokedEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
+export namespace RegistrarGrantedEvent {
+  export type InputTuple = [
+    registrar: AddressLike,
+    grantedBy: AddressLike,
+    timestamp: BigNumberish
+  ];
+  export type OutputTuple = [
+    registrar: string,
+    grantedBy: string,
+    timestamp: bigint
+  ];
+  export interface OutputObject {
+    registrar: string;
+    grantedBy: string;
+    timestamp: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export namespace RoleAdminChangedEvent {
   export type InputTuple = [
     role: BytesLike,
@@ -437,6 +496,8 @@ export interface EvidenceRegistry extends BaseContract {
 
   OFFICER_ROLE: TypedContractMethod<[], [string], "view">;
 
+  REGISTRAR_ROLE: TypedContractMethod<[], [string], "view">;
+
   addCustodyEvent: TypedContractMethod<
     [evidenceId: string, action: string],
     [void],
@@ -444,6 +505,18 @@ export interface EvidenceRegistry extends BaseContract {
   >;
 
   addEvidence: TypedContractMethod<
+    [
+      evidenceId: string,
+      fileHash: string,
+      ipfsCID: string,
+      aiScore: BigNumberish,
+      uploaderWallet: AddressLike
+    ],
+    [void],
+    "nonpayable"
+  >;
+
+  addEvidenceByRegistrar: TypedContractMethod<
     [
       evidenceId: string,
       fileHash: string,
@@ -492,6 +565,12 @@ export interface EvidenceRegistry extends BaseContract {
     "nonpayable"
   >;
 
+  grantRegistrar: TypedContractMethod<
+    [registrar: AddressLike],
+    [void],
+    "nonpayable"
+  >;
+
   grantRole: TypedContractMethod<
     [role: BytesLike, account: AddressLike],
     [void],
@@ -499,6 +578,12 @@ export interface EvidenceRegistry extends BaseContract {
   >;
 
   hasOfficerRole: TypedContractMethod<
+    [account: AddressLike],
+    [boolean],
+    "view"
+  >;
+
+  hasRegistrarRole: TypedContractMethod<
     [account: AddressLike],
     [boolean],
     "view"
@@ -560,6 +645,9 @@ export interface EvidenceRegistry extends BaseContract {
     nameOrSignature: "OFFICER_ROLE"
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
+    nameOrSignature: "REGISTRAR_ROLE"
+  ): TypedContractMethod<[], [string], "view">;
+  getFunction(
     nameOrSignature: "addCustodyEvent"
   ): TypedContractMethod<
     [evidenceId: string, action: string],
@@ -568,6 +656,19 @@ export interface EvidenceRegistry extends BaseContract {
   >;
   getFunction(
     nameOrSignature: "addEvidence"
+  ): TypedContractMethod<
+    [
+      evidenceId: string,
+      fileHash: string,
+      ipfsCID: string,
+      aiScore: BigNumberish,
+      uploaderWallet: AddressLike
+    ],
+    [void],
+    "nonpayable"
+  >;
+  getFunction(
+    nameOrSignature: "addEvidenceByRegistrar"
   ): TypedContractMethod<
     [
       evidenceId: string,
@@ -615,6 +716,9 @@ export interface EvidenceRegistry extends BaseContract {
     nameOrSignature: "grantOfficer"
   ): TypedContractMethod<[officer: AddressLike], [void], "nonpayable">;
   getFunction(
+    nameOrSignature: "grantRegistrar"
+  ): TypedContractMethod<[registrar: AddressLike], [void], "nonpayable">;
+  getFunction(
     nameOrSignature: "grantRole"
   ): TypedContractMethod<
     [role: BytesLike, account: AddressLike],
@@ -623,6 +727,9 @@ export interface EvidenceRegistry extends BaseContract {
   >;
   getFunction(
     nameOrSignature: "hasOfficerRole"
+  ): TypedContractMethod<[account: AddressLike], [boolean], "view">;
+  getFunction(
+    nameOrSignature: "hasRegistrarRole"
   ): TypedContractMethod<[account: AddressLike], [boolean], "view">;
   getFunction(
     nameOrSignature: "hasRole"
@@ -704,6 +811,13 @@ export interface EvidenceRegistry extends BaseContract {
     OfficerRevokedEvent.OutputObject
   >;
   getEvent(
+    key: "RegistrarGranted"
+  ): TypedContractEvent<
+    RegistrarGrantedEvent.InputTuple,
+    RegistrarGrantedEvent.OutputTuple,
+    RegistrarGrantedEvent.OutputObject
+  >;
+  getEvent(
     key: "RoleAdminChanged"
   ): TypedContractEvent<
     RoleAdminChangedEvent.InputTuple,
@@ -779,6 +893,17 @@ export interface EvidenceRegistry extends BaseContract {
       OfficerRevokedEvent.InputTuple,
       OfficerRevokedEvent.OutputTuple,
       OfficerRevokedEvent.OutputObject
+    >;
+
+    "RegistrarGranted(address,address,uint256)": TypedContractEvent<
+      RegistrarGrantedEvent.InputTuple,
+      RegistrarGrantedEvent.OutputTuple,
+      RegistrarGrantedEvent.OutputObject
+    >;
+    RegistrarGranted: TypedContractEvent<
+      RegistrarGrantedEvent.InputTuple,
+      RegistrarGrantedEvent.OutputTuple,
+      RegistrarGrantedEvent.OutputObject
     >;
 
     "RoleAdminChanged(bytes32,bytes32,bytes32)": TypedContractEvent<

@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const path = require('path');
 
 /**
  * Magic number signatures for supported image formats
@@ -32,6 +33,30 @@ function checkMagicNumber(buffer, magicNumbers) {
     });
 }
 
+function validateEvidenceImageType(fileBuffer, declaredMimeType, fileName) {
+    if (!fileBuffer || fileBuffer.length === 0) {
+        return { valid: false, reason: 'File is empty.' };
+    }
+
+    const extension = path.extname(String(fileName || '')).toLowerCase();
+    const mimeType = declaredMimeType === 'image/jpg' ? 'image/jpeg' : declaredMimeType;
+    const expectedMimeType = extension === '.jpg' || extension === '.jpeg'
+        ? 'image/jpeg'
+        : extension === '.png'
+            ? 'image/png'
+            : null;
+
+    if (!expectedMimeType || mimeType !== expectedMimeType) {
+        return { valid: false, reason: 'Only matching JPEG/JPG and PNG image files are allowed.' };
+    }
+
+    if (!checkMagicNumber(fileBuffer, IMAGE_MAGIC_NUMBERS[expectedMimeType])) {
+        return { valid: false, reason: 'The file contents do not match the declared JPEG or PNG image type.' };
+    }
+
+    return { valid: true, mimeType: expectedMimeType };
+}
+
 /**
  * Validate image file by checking magic numbers
  * @param {Buffer} fileBuffer - The file buffer
@@ -48,11 +73,13 @@ function validateImageByMagicNumber(fileBuffer, declaredMimeType) {
         return { valid: false, reason: `File size exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit` };
     }
 
+    const normalizedMimeType = declaredMimeType === 'image/jpg' ? 'image/jpeg' : declaredMimeType;
+
     // Check each supported image type
     for (const [mimeType, magicNumbers] of Object.entries(IMAGE_MAGIC_NUMBERS)) {
         if (checkMagicNumber(fileBuffer, magicNumbers)) {
             // Magic number matches this type
-            if (declaredMimeType && declaredMimeType !== mimeType) {
+            if (normalizedMimeType && normalizedMimeType !== mimeType) {
                 return { 
                     valid: false, 
                     reason: `Declared MIME type (${declaredMimeType}) does not match actual file type (${mimeType})` 
@@ -177,6 +204,7 @@ function isSupportedImageMimeType(mimeType) {
 
 module.exports = {
     validateImageFile,
+    validateEvidenceImageType,
     isSupportedImageMimeType,
     MAX_FILE_SIZE,
     MAX_IMAGE_DIMENSION

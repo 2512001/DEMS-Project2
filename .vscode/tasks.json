@@ -1,0 +1,18 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Validate DEMS frontend build",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				".\\dems-frontend-web",
+				"run",
+				"build"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}

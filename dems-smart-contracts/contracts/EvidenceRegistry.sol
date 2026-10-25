@@ -11,6 +11,7 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
  */
 contract EvidenceRegistry is AccessControl {
     bytes32 public constant OFFICER_ROLE = keccak256("OFFICER_ROLE");
+    bytes32 public constant REGISTRAR_ROLE = keccak256("REGISTRAR_ROLE");
 
     /// @dev aiScore is stored as score * 100 (e.g. 98.5 -> 9850) for sub-percent precision without floats.
     struct Evidence {
@@ -60,6 +61,7 @@ contract EvidenceRegistry is AccessControl {
 
     event OfficerGranted(address indexed officer, address indexed grantedBy, uint256 timestamp);
     event OfficerRevoked(address indexed officer, address indexed revokedBy, uint256 timestamp);
+    event RegistrarGranted(address indexed registrar, address indexed grantedBy, uint256 timestamp);
 
     error Unauthorized();
     error EvidenceAlreadyExists();
@@ -130,6 +132,60 @@ contract EvidenceRegistry is AccessControl {
         "UPLOAD"
     );
 }
+
+    /**
+     * @notice Backend registrar registration after upload approval.
+     * @dev Stores the original uploader wallet without requiring that wallet to be msg.sender.
+     *      Requires REGISTRAR_ROLE. Direct addEvidence still requires uploaderWallet == msg.sender.
+     */
+    function addEvidenceByRegistrar(
+        string calldata evidenceId,
+        string calldata fileHash,
+        string calldata ipfsCID,
+        uint256 aiScore,
+        address uploaderWallet
+    ) external onlyRole(REGISTRAR_ROLE) {
+        if (uploaderWallet == address(0)) revert InvalidInput();
+        _validateEvidenceInputs(evidenceId, fileHash, ipfsCID);
+
+        bytes32 idHash = keccak256(bytes(evidenceId));
+        if (_evidenceIdExists[idHash]) revert EvidenceAlreadyExists();
+
+        bytes32 hashKey = keccak256(bytes(fileHash));
+        if (_fileHashExists[hashKey]) revert FileHashAlreadyExists();
+
+        _evidenceIdExists[idHash] = true;
+        _fileHashExists[hashKey] = true;
+
+        unchecked {
+            _uploaderEvidenceCount[uploaderWallet]++;
+        }
+
+        Evidence storage record = _evidenceById[idHash];
+        record.evidenceId = evidenceId;
+        record.fileHash = fileHash;
+        record.ipfsCID = ipfsCID;
+        record.aiScore = aiScore;
+        record.timestamp = block.timestamp;
+        record.uploaderWallet = uploaderWallet;
+        record.exists = true;
+
+        emit EvidenceAdded(
+            evidenceId,
+            fileHash,
+            ipfsCID,
+            aiScore,
+            block.timestamp,
+            uploaderWallet
+        );
+
+        _appendCustodyEvent(
+            idHash,
+            evidenceId,
+            msg.sender,
+            "UPLOAD_APPROVED"
+        );
+    }
 
     function getEvidence(
         string calldata evidenceId
@@ -234,6 +290,16 @@ function addCustodyEvent(
 
     function hasOfficerRole(address account) external view returns (bool) {
         return hasRole(OFFICER_ROLE, account);
+    }
+
+    function grantRegistrar(address registrar) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (registrar == address(0)) revert InvalidInput();
+        _grantRole(REGISTRAR_ROLE, registrar);
+        emit RegistrarGranted(registrar, msg.sender, block.timestamp);
+    }
+
+    function hasRegistrarRole(address account) external view returns (bool) {
+        return hasRole(REGISTRAR_ROLE, account);
     }
 
     function _validateEvidenceInputs(

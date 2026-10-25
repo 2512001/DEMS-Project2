@@ -101,6 +101,25 @@ describe("EvidenceRegistry", function () {
       ).to.be.reverted;
     });
 
+    it("rejects registrar registration without REGISTRAR_ROLE", async function () {
+      await expect(
+        registry.connect(officer).addEvidenceByRegistrar(evidenceId, fileHash, ipfsCID, aiScore, citizen.address)
+      ).to.be.reverted;
+    });
+
+    it("allows registrar to register evidence for an uploader wallet", async function () {
+      await registry.connect(admin).grantRegistrar(admin.address);
+      await expect(
+        registry.connect(admin).addEvidenceByRegistrar(evidenceId, fileHash, ipfsCID, aiScore, citizen.address)
+      )
+        .to.emit(registry, "EvidenceAdded")
+        .withArgs(evidenceId, fileHash, ipfsCID, aiScore, anyValue, citizen.address);
+
+      const record = await registry.getEvidence(evidenceId);
+      expect(record.uploaderWallet).to.equal(citizen.address);
+      expect(await registry.getUploaderEvidenceCount(citizen.address)).to.equal(1);
+    });
+
     it("rejects uploaderWallet mismatch", async function () {
       await expect(
         registry.connect(officer).addEvidence(evidenceId, fileHash, ipfsCID, aiScore, citizen.address)

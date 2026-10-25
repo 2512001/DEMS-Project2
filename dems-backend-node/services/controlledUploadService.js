@@ -4,7 +4,7 @@ const EvidenceModel = require('../model/evidenceModel');
 const { storeQuarantineFile, readQuarantineFile } = require('./quarantineStorage');
 const { computeSha256 } = require('./cryptoService');
 const { verifyUploadSignature, generateNonce, createExpiryDate } = require('./signatureService');
-const { validateImageFile } = require('./imageValidationService');
+const { validateImageFile, validateEvidenceImageType } = require('./imageValidationService');
 const { isEmployee, isNormalUser, isAdmin, isSuperAdmin, httpError } = require('./accessControl');
 const { writeAuditLog } = require('./auditService');
 const { notifyOrganizationAdmins } = require('./notificationService');
@@ -36,6 +36,10 @@ async function createPendingUploadRequest({
     }
 
     // Step 2: Validate file format (images only for controlled workflow)
+    const imageTypeValidation = validateEvidenceImageType(fileBuffer, file.mimetype, file.originalname);
+    if (!imageTypeValidation.valid) {
+        throw httpError(400, imageTypeValidation.reason || 'Invalid image file');
+    }
     const imageValidation = validateImageFile(fileBuffer, file.mimetype);
     if (!imageValidation.valid) {
         throw httpError(400, imageValidation.reason || 'Invalid image file');

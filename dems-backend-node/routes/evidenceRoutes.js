@@ -13,13 +13,13 @@ const {
     checkWalletBalance
 } = require('../controllers/evidenceController');
 const { verifyEvidenceBlockchain } = require('../controllers/evidenceVerificationController');
-const upload = require('../middleware/multer');
+const { uploadEvidenceMemory } = require('../middleware/multer');
 const { protect } = require('../middleware/authMiddleware');
 const { authorizeRoles } = require('../middleware/roleMiddleware');
 
 const router = express.Router();
 
-router.post('/upload', protect, upload.single('evidence'), uploadEvidence);
+router.post('/upload', protect, uploadEvidenceMemory.single('evidence'), uploadEvidence);
 router.get('/upload-policy', protect, getUploadPolicy);
 router.post('/finalize/:evidenceId', protect, finalizeEvidence);
 router.post('/:evidenceId/blockchain-failed', protect, markBlockchainFailed);

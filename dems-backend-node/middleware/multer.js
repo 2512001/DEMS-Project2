@@ -60,5 +60,29 @@ const uploadMemory = multer({
     }
 });
 
+const evidenceImageExtensions = {
+    'image/jpeg': new Set(['.jpg', '.jpeg']),
+    'image/jpg': new Set(['.jpg', '.jpeg']),
+    'image/png': new Set(['.png'])
+};
+
+const uploadEvidenceMemory = multer({
+    storage: memoryStorage,
+    limits: { fileSize: 50 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const extensions = evidenceImageExtensions[file.mimetype];
+        const extension = path.extname(file.originalname || '').toLowerCase();
+        if (extensions?.has(extension)) {
+            cb(null, true);
+            return;
+        }
+
+        const error = new Error('Only JPEG and PNG image files are allowed.');
+        error.code = 'UNSUPPORTED_IMAGE_TYPE';
+        cb(error);
+    }
+});
+
 module.exports = upload;
 module.exports.uploadMemory = uploadMemory;
+module.exports.uploadEvidenceMemory = uploadEvidenceMemory;

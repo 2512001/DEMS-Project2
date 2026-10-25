@@ -223,6 +223,20 @@ export default function UploadEvidence() {
       setSelectedFile(null);
       return;
     }
+
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    const allowedType = (extension === 'jpg' || extension === 'jpeg')
+      ? ['image/jpeg', 'image/jpg'].includes(file.type)
+      : extension === 'png' && file.type === 'image/png';
+    if (!allowedType) {
+      setError('Unsupported file. Choose a JPEG or PNG image.');
+      setSelectedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      form.setValue('evidence', undefined);
+      return;
+    }
+
+    setError('');
     setSelectedFile(file);
     try {
       const exif = await exifr.parse(file);
@@ -359,7 +373,7 @@ export default function UploadEvidence() {
                 className="sr-only"
                 id="evidence-file"
                 type="file"
-                accept="image/*,video/*,audio/*,.pdf"
+                accept=".jpg,.jpeg,.png,image/jpeg,image/png"
                 {...evidenceRegister}
                 onChange={async (event) => {
                   evidenceRegister.onChange(event);
@@ -408,7 +422,7 @@ export default function UploadEvidence() {
                       browse
                     </label>
                   </p>
-                  <p className="mt-1 text-[12px] text-ink-faint">Images, video, audio, or PDF</p>
+                  <p className="mt-1 text-[12px] text-ink-faint">JPEG or PNG images only</p>
                 </div>
               )}
             </div>
