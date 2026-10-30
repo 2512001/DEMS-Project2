@@ -1,4 +1,5 @@
 require('dotenv').config();
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const { connect } = require("./connectionDb/connectDb");
@@ -15,11 +16,13 @@ const groupRoutes = require('./routes/groupRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const monitoringRoutes = require('./routes/monitoringRoutes');
 const controlledUploadRoutes = require('./routes/controlledUploadRoutes');
+const viewAccessRoutes = require('./routes/viewAccessRoutes');
 const { initializeTransporter, verifySMTPConnection, isSMTPConfigured } = require('./services/emailService');
+const { initSocket } = require('./services/socketService');
+const { initCleanupWorker } = require('./services/controlledUploadService');
 const mongoose = require("mongoose");
 
-
-//connect database 
+// Connect database 
 connect();
 
 try {
@@ -35,10 +38,6 @@ try {
   console.error('[EMAIL] Failed to initialize email service:', error.message);
 }
 
-
-
-
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -47,9 +46,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-
-
-//router middleware
+// 2. Router middleware
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/evidence', evidenceRoutes);
@@ -63,8 +60,7 @@ app.use('/api/groups', groupRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/controlled-upload', controlledUploadRoutes);
-
-
+app.use('/api/view-access', viewAccessRoutes);
 
 // Catch-all for 404 Not Found routes
 app.use((req, res, next) => {
@@ -91,13 +87,17 @@ app.use((err, req, res, next) => {
     res.status(isUploadError ? 400 : status).json({
         success: false,
         message: isUploadError
-            ? (err.code === 'LIMIT_FILE_SIZE' ? 'File exceeds the 50MB upload limit.' : err.message)
+            ? (err.code === 'LIMIT_FILE_SIZE' ? 'File exceeds the 20MB upload limit.' : err.message)
             : (status === 500 ? (process.env.NODE_ENV === 'production' ? 'Internal Server Error' : err.message) : err.message)
     });
 });
 
+// Create HTTP Server & Bind Socket.IO
+const server = http.createServer(app);
+initSocket(server);
+initCleanupWorker();
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`=========================================`);
     console.log(`🚀 DEMS API Gateway running on port ${PORT}`);
     console.log(`=========================================`);

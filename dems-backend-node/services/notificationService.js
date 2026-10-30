@@ -37,6 +37,20 @@ async function createNotification({
     });
 
     console.log('[NOTIFICATION] Created notification:', notification._id, 'for recipient:', recipientId);
+
+    // Real-time delivery to recipient socket room
+    try {
+      const { getIO } = require('./socketService');
+      const io = getIO();
+      if (io) {
+        const recipientStr = String(recipientId?._id || recipientId);
+        io.to(`user:${recipientStr}`).emit('notification_created', notification);
+        io.to(`user:${recipientStr}`).emit('workflow_counts_update', { recipientId: recipientStr });
+      }
+    } catch (sockErr) {
+      console.warn('[NOTIFICATION] Real-time socket emit skipped:', sockErr.message);
+    }
+
     return notification;
   } catch (err) {
     console.error('[NOTIFICATION] Failed to create notification:', err);
@@ -46,16 +60,17 @@ async function createNotification({
 
 async function getNotificationsForUser(userId, organizationId) {
   try {
-    const notifications = await Notification.find({
-      recipientId: userId,
-      organizationId
-    })
+    const query = { recipientId: userId };
+    if (organizationId) {
+      query.$or = [{ organizationId }, { organizationId: null }];
+    }
+
+    const notifications = await Notification.find(query)
       .sort({ createdAt: -1 })
       .limit(50);
 
     const unreadCount = await Notification.countDocuments({
-      recipientId: userId,
-      organizationId,
+      ...query,
       read: false
     });
 
@@ -90,8 +105,13 @@ async function markNotificationAsRead(notificationId, userId) {
 
 async function markAllAsRead(userId, organizationId) {
   try {
+    const query = { recipientId: userId, read: false };
+    if (organizationId) {
+      query.$or = [{ organizationId }, { organizationId: null }];
+    }
+
     const result = await Notification.updateMany(
-      { recipientId: userId, organizationId, read: false },
+      query,
       { read: true, readAt: new Date() }
     );
 
@@ -113,14 +133,19 @@ async function notifyOrganizationAdmins({
   excludeUserId = null
 }) {
   try {
-    // Find all admins for the organization
+    const org = await Organization.findById(organizationId).select('adminId createdBy');
+    
+    // Find all admins for the organization (including createdBy or adminId if organizationId is not yet updated on User)
     const admins = await User.find({
-      organizationId,
-      role: 'admin',
+      $or: [
+        { organizationId, role: 'admin' },
+        ...(org?.adminId ? [{ _id: org.adminId, role: 'admin' }] : []),
+        ...(org?.createdBy ? [{ _id: org.createdBy, role: 'admin' }] : [])
+      ],
       accountStatus: 'active'
     }).select('_id');
 
-    console.log('[NOTIFICATION] Found', admins.length, 'admins to notify');
+    console.log('[NOTIFICATION] Found', admins.length, 'admins to notify for org:', organizationId);
 
     const notifications = await Promise.all(
       admins.map((admin) => {

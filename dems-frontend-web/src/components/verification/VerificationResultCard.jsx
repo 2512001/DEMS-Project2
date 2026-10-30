@@ -2,6 +2,7 @@ import React from 'react';
 import { CheckCircle2, XCircle } from 'lucide-react';
 import VerificationStatusBadge, { VerificationBanner } from './VerificationStatusBadge.jsx';
 import VerificationComparisonTable from './VerificationComparisonTable.jsx';
+import VerificationStatusPanel from './VerificationStatusPanel.jsx';
 import { formatDate } from '../../utils/format.js';
 
 function CheckCard({ label, matched }) {
@@ -58,6 +59,8 @@ export default function VerificationResultCard({ result }) {
         verifiedAt={verifiedAt}
         transactionHash={blockchainData?.transactionHash}
       />
+
+      <VerificationStatusPanel item={{ ...result, status: isVerified ? 'stored_on_chain' : 'error', integrityVerified: isVerified, verifiedAt }} />
 
       <div className="section-card">
         <div className="flex flex-wrap items-center justify-between gap-4">

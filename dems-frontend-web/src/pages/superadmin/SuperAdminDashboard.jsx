@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -19,7 +19,9 @@ import {
   X,
   FileText,
   HardDrive,
-  Link as LinkIcon
+  Link as LinkIcon,
+  Eye,
+  ArrowRight
 } from 'lucide-react';
 
 import {
@@ -31,6 +33,9 @@ import {
   updateOrganizationStatus
 } from '../../api/admin.js';
 import { getPlatformAnalytics } from '../../api/analytics.js';
+import { getWorkflowCounts } from '../../api/viewAccess.js';
+import { subscribeToViewAccessEvents } from '../../api/socket.js';
+import { useToast } from '../../components/ui/Toast.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import PageHeader from '../../components/ui/PageHeader.jsx';
 import StatCard from '../../components/ui/StatCard.jsx';
@@ -382,6 +387,7 @@ function OrganizationDetailsModal({ organizationId, onClose }) {
 export default function SuperAdminDashboard() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const { push } = useToast();
   const [activeTab, setActiveTab] = useState('overview');
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showInviteForm, setShowInviteForm] = useState(false);
@@ -399,6 +405,26 @@ export default function SuperAdminDashboard() {
     enabled: user?.role === 'super_admin',
     refetchInterval: 60000
   });
+
+  const workflowCounts = useQuery({
+    queryKey: ['workflow-counts'],
+    queryFn: getWorkflowCounts,
+    enabled: user?.role === 'super_admin',
+    refetchInterval: 15000
+  });
+
+  useEffect(() => {
+    const unsubView = subscribeToViewAccessEvents((event) => {
+      queryClient.invalidateQueries({ queryKey: ['workflow-counts'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      if (event.eventName === 'view_access_request_created') {
+        push(`Organization Admin requested view access: ${event.requestId || ''}`, { tone: 'brand' });
+      } else if (event.eventName === 'view_access_approved') {
+        push(`View access approved: ${event.requestId || ''}`, { tone: 'success' });
+      }
+    });
+    return () => unsubView();
+  }, [queryClient, push]);
 
   const createOrg = useMutation({
     mutationFn: createOrganization,
@@ -433,6 +459,7 @@ export default function SuperAdminDashboard() {
   const orgs = organizations.data?.data || [];
   const activeOrgs = orgs.filter((org) => org.status === 'active');
   const securityEvents = platformAnalytics.data?.recentSecurityEvents || [];
+  const pendingViewCount = workflowCounts.data?.data?.pendingViewApprovals || 0;
 
   const tabs = [
     { value: 'overview', label: 'Overview', icon: BarChart3 },
@@ -453,6 +480,15 @@ export default function SuperAdminDashboard() {
         subtitle="Manage organizations, administrators, and platform-wide security."
         actions={
           <>
+            <Link to="/superadmin/view-requests" className="btn-secondary">
+              <Eye size={15} />
+              View Access Requests
+              {pendingViewCount > 0 && (
+                <span className="ml-1 rounded-full bg-brand px-1.5 py-0.5 text-[10px] font-bold text-white">
+                  {pendingViewCount}
+                </span>
+              )}
+            </Link>
             <button type="button" className="btn-secondary" onClick={() => setShowInviteForm(true)}>
               <Mail size={15} />
               Invite admin
@@ -465,9 +501,9 @@ export default function SuperAdminDashboard() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {platformAnalytics.isLoading ? (
-          Array.from({ length: 4 }).map((_, index) => <StatCardSkeleton key={index} />)
+          Array.from({ length: 5 }).map((_, index) => <StatCardSkeleton key={index} />)
         ) : (
           <>
             <StatCard
@@ -498,9 +534,32 @@ export default function SuperAdminDashboard() {
               detail={`${overview?.quarantinedEvidence ?? 0} quarantined · ${overview?.pendingInvitations ?? 0} pending invitations`}
               tone={(overview?.quarantinedEvidence ?? 0) + (overview?.pendingInvitations ?? 0) > 0 ? 'warn' : 'neutral'}
             />
+            <Link to="/superadmin/view-requests" className="block transition hover:opacity-90">
+              <StatCard
+                icon={Eye}
+                label="View Access Requests"
+                value={pendingViewCount}
+                detail={pendingViewCount > 0 ? `${pendingViewCount} awaiting review` : 'All requests processed'}
+                tone={pendingViewCount > 0 ? 'brand' : 'neutral'}
+              />
+            </Link>
           </>
         )}
       </div>
+
+      {/* Alert Banner for Pending View Access Requests */}
+      {pendingViewCount > 0 ? (
+        <div className="flex items-center justify-between rounded-[9px] border border-brand/30 bg-brand-soft px-4 py-3">
+          <div className="flex items-center gap-2.5 text-[13px] font-medium text-brand">
+            <Eye size={17} />
+            <span>You have <strong>{pendingViewCount}</strong> Organization Admin view access request(s) awaiting your decision.</span>
+          </div>
+          <Link to="/superadmin/view-requests" className="btn-primary btn-sm">
+            Review View Requests
+            <ArrowRight size={13} />
+          </Link>
+        </div>
+      ) : null}
 
       <Tabs tabs={tabs} value={activeTab} onChange={setActiveTab} />
 

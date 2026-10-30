@@ -27,7 +27,7 @@ const FILTERS = [
 ];
 
 function matchesFilter(file, filter) {
-  if (filter === 'verified') return file.blockchainStatus === 'confirmed' || Boolean(file.blockchainTxHash);
+  if (filter === 'verified') return file.verification?.blockchainIntegrity === 'Verified' || file.blockchainStatus === 'confirmed' || Boolean(file.blockchainTxHash);
   if (filter === 'pending') return file.blockchainStatus === 'pending' || file.status === 'pending_blockchain';
   if (filter === 'needs_review') return file.blockchainStatus === 'failed';
   return true;
@@ -64,7 +64,7 @@ export default function EvidenceVault() {
     });
   }, [files, filter, term]);
 
-  const verified = files.filter((file) => file.blockchainStatus === 'confirmed' || file.blockchainTxHash).length;
+  const verified = files.filter((file) => file.verification?.blockchainIntegrity === 'Verified' || file.blockchainStatus === 'confirmed' || file.blockchainTxHash).length;
   const pending = files.filter((file) => file.blockchainStatus === 'pending' || file.status === 'pending_blockchain').length;
   const storedSize = files.reduce((total, file) => total + (Number(file.fileSize) || 0), 0);
   const loading = query.isLoading;

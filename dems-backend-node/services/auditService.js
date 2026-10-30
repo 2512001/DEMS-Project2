@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const AuditLog = require('../model/auditLogModel');
 
 async function writeAuditLog({
@@ -11,8 +12,12 @@ async function writeAuditLog({
     metadata = {}
 }) {
     try {
+        const actorId = (actor?.id && mongoose.Types.ObjectId.isValid(actor.id))
+            ? new mongoose.Types.ObjectId(actor.id)
+            : null;
+
         await AuditLog.create({
-            actorId: actor?.id || null,
+            actorId,
             actorWallet: actor?.walletAddress || '',
             organizationId: organizationId || actor?.organizationId || null,
             action,

@@ -64,32 +64,12 @@ export function VerificationBanner({ verified, message, verifiedAt, transactionH
         </div>
       </div>
 
-      {transactionHash ? (
-        <div className="flex items-center gap-1.5">
-          <code className="rounded-[7px] border border-line bg-card px-2 py-1 font-mono text-[11.5px] text-ink-muted">
-            {transactionHash.slice(0, 10)}…{transactionHash.slice(-8)}
-          </code>
-          <button
-            type="button"
-            onClick={copy}
-            className="grid h-7 w-7 place-items-center rounded-[7px] border border-line bg-card text-ink-faint transition hover:text-ink"
-            aria-label="Copy transaction hash"
-          >
-            {copied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
-          </button>
-          {explorer ? (
-            <a
-              href={`${explorer}/tx/${transactionHash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="grid h-7 w-7 place-items-center rounded-[7px] border border-line bg-card text-ink-faint transition hover:text-ink"
-              aria-label="View transaction on explorer"
-            >
-              <ExternalLink size={12} />
-            </a>
-          ) : null}
-        </div>
-      ) : null}
+      <div className="flex items-center gap-1.5">
+        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[12px] font-medium bg-card border border-line text-ink shadow-xs">
+          <CheckCircle2 size={13} className="text-success" />
+          <span>Blockchain Proof Verified</span>
+        </span>
+      </div>
     </div>
   );
 }

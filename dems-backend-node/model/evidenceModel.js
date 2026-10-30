@@ -70,7 +70,10 @@ const evidenceSchema = new Schema({
     encryption: {
         iv: { type: String, default: null },
         authTag: { type: String, default: null },
-        algorithm: { type: String, default: 'aes-256-gcm' }
+        algorithm: { type: String, default: 'aes-256-gcm' },
+        encryptedDEK: { type: String, default: null },
+        keyIv: { type: String, default: null },
+        keyAuthTag: { type: String, default: null }
     },
     // Multi-party key management (Phase 2)
     keyVersion: {

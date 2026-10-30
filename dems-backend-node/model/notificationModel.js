@@ -11,13 +11,31 @@ const notificationSchema = new Schema({
   organizationId: {
     type: Schema.Types.ObjectId,
     ref: 'Organization',
-    required: true,
+    default: null,
     index: true
   },
   type: {
     type: String,
     required: true,
-    enum: ['employee_application', 'approval', 'rejection', 'evidence_upload', 'quarantine', 'group_assignment', 'system'],
+    enum: [
+      'upload_request_created',
+      'upload_approved',
+      'upload_rejected',
+      'platform_upload_monitored',
+      'evidence_finalized',
+      'employee_application',
+      'approval',
+      'rejection',
+      'evidence_upload',
+      'quarantine',
+      'group_assignment',
+      'system',
+      'view_request_created',
+      'view_request_approved',
+      'view_request_rejected',
+      'view_request_revoked',
+      'view_request_expired'
+    ],
     index: true
   },
   title: {

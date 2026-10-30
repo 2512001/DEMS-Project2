@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../model/userModel');
+const Organization = require('../model/organizationModel');
 
 const protect = async (req, res, next) => {
     try {
@@ -28,11 +29,26 @@ const protect = async (req, res, next) => {
 
         console.log('[AUTH] Protected route - User role:', user.role, 'organizationId:', user.organizationId);
 
+        let orgId = user.organizationId ? user.organizationId.toString() : null;
+
+        // Auto-resolve organization for Organization Admins if not yet linked
+        if (user.role === 'admin' && !orgId) {
+            const org = await Organization.findOne({
+                $or: [{ adminId: user._id }, { createdBy: user._id }]
+            }).select('_id');
+            if (org) {
+                user.organizationId = org._id;
+                await user.save();
+                orgId = org._id.toString();
+                console.log('[AUTH] Auto-resolved organizationId for admin:', orgId);
+            }
+        }
+
         req.user = {
             id: user._id.toString(),
             role: user.role,
             walletAddress: user.walletAddress,
-            organizationId: user.organizationId ? user.organizationId.toString() : null
+            organizationId: orgId
         };
 
         next();

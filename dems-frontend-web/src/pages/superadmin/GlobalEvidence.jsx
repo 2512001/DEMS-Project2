@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Search, Filter, FileText, Building2, Hash, X, CheckCircle, Clock, XCircle, AlertTriangle, Eye } from 'lucide-react';
+import { Search, Filter, FileText, Building2, Hash, X, CheckCircle, Clock, XCircle, AlertTriangle, Eye, Shield, Unlock, RefreshCw, Ban } from 'lucide-react';
 import { getPlatformEvidence, listOrganizations } from '../../api/admin.js';
+import { subscribeToViewAccessEvents } from '../../api/socket.js';
 import PageHeader from '../../components/ui/PageHeader.jsx';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
 import { TableSkeleton } from '../../components/ui/Skeleton.jsx';
+import RequestViewAccessModal from '../../components/viewAccess/RequestViewAccessModal.jsx';
 import { formatDate, formatRelativeTime } from '../../utils/format.js';
 
 export default function GlobalEvidence() {
@@ -19,6 +21,8 @@ export default function GlobalEvidence() {
   const [endDate, setEndDate] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
+  const [showRequestModal, setShowRequestModal] = useState(false);
+  const [selectedEvidence, setSelectedEvidence] = useState(null);
 
   const { data: evidenceData, isLoading, isError, refetch } = useQuery({
     queryKey: ['platform-evidence', page, search, statusFilter, blockchainFilter, orgFilter, fileTypeFilter, startDate, endDate],
@@ -46,6 +50,14 @@ export default function GlobalEvidence() {
 
   const hasActiveFilters = search || statusFilter || blockchainFilter || orgFilter || fileTypeFilter || startDate || endDate;
 
+  // Real-time synchronization when view access requests are created or updated
+  useEffect(() => {
+    const unsub = subscribeToViewAccessEvents(() => {
+      refetch();
+    });
+    return () => unsub();
+  }, [refetch]);
+
   const clearFilters = () => {
     setSearch('');
     setStatusFilter('');
@@ -72,6 +84,16 @@ export default function GlobalEvidence() {
         eyebrow="Platform administration"
         title="Global evidence"
         subtitle="View all evidence files across the platform."
+        actions={
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => { setSelectedEvidence(null); setShowRequestModal(true); }}
+          >
+            <Shield size={14} />
+            Request View Access
+          </button>
+        }
       />
 
       <div className="flex flex-col gap-3 border-b border-line px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
@@ -234,7 +256,54 @@ export default function GlobalEvidence() {
                     <td>
                       <div>
                         <p className="text-[13px] font-medium text-ink">{ev.fileName}</p>
-                        <p className="text-[11.5px] text-ink-f">{ev.mimeType}</p>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                          <span className="text-[11.5px] text-ink-f">{ev.mimeType}</span>
+                          {ev.userAccessStatus === 'pending' && (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-[5px] border border-amber-300 bg-amber-500/10 px-1.5 py-0.2 text-[10.5px] font-medium text-amber-800"
+                              title={`Requested on ${ev.latestRequest?.createdAt ? formatDate(ev.latestRequest.createdAt) : 'N/A'}`}
+                            >
+                              <Clock size={10} className="animate-spin text-amber-600 shrink-0" />
+                              Pending ({ev.latestRequest?.requestedDuration || '1h'}) · {ev.latestRequest?.createdAt ? formatRelativeTime(ev.latestRequest.createdAt) : ''}
+                            </span>
+                          )}
+                          {ev.userAccessStatus === 'approved' && (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-[5px] border border-[#c7e9dd] bg-success-soft px-1.5 py-0.2 text-[10.5px] font-medium text-success"
+                              title={ev.activePermission?.isOwner ? 'Owner access' : `Access granted until ${ev.latestRequest?.expiresAt ? formatDate(ev.latestRequest.expiresAt) : 'expiry'}`}
+                            >
+                              <Unlock size={10} />
+                              {ev.activePermission?.isOwner ? 'Owner Access' : `Access Active (${ev.latestRequest?.requestedDuration || 'Granted'})`}
+                            </span>
+                          )}
+                          {ev.userAccessStatus === 'rejected' && (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-[5px] border border-danger/30 bg-danger-soft px-1.5 py-0.2 text-[10.5px] font-medium text-danger"
+                              title={ev.latestRequest?.rejectionReason ? `Reason: ${ev.latestRequest.rejectionReason}` : 'Rejected'}
+                            >
+                              <XCircle size={10} />
+                              Rejected {ev.latestRequest?.rejectedAt ? `· ${formatRelativeTime(ev.latestRequest.rejectedAt)}` : ''}
+                            </span>
+                          )}
+                          {ev.userAccessStatus === 'expired' && (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-[5px] border border-line bg-surface px-1.5 py-0.2 text-[10.5px] font-medium text-ink-muted"
+                              title="Temporary view access has expired"
+                            >
+                              <Clock size={10} />
+                              Expired
+                            </span>
+                          )}
+                          {ev.userAccessStatus === 'revoked' && (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-[5px] border border-rose-300 bg-rose-50 px-1.5 py-0.2 text-[10.5px] font-medium text-rose-700"
+                              title={ev.latestRequest?.revocationReason ? `Revoked: ${ev.latestRequest.revocationReason}` : 'Revoked'}
+                            >
+                              <Ban size={10} />
+                              Revoked
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td>
@@ -277,15 +346,100 @@ export default function GlobalEvidence() {
                         {formatRelativeTime(ev.createdAt)}
                       </span>
                     </td>
-                    <td className="text-right">
-                      <Link
-                        to={`/superadmin/evidence/${ev._id}`}
-                        className="btn-ghost btn-sm"
-                        title="View evidence"
-                      >
-                        <Eye size={14} />
-                        View
-                      </Link>
+                    <td className="text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1.5 justify-end">
+                        {ev.userAccessStatus === 'pending' ? (
+                          <span
+                            className="inline-flex items-center gap-1.5 rounded-[7px] border border-amber-300 bg-amber-500/10 px-2.5 py-1.5 text-[11.5px] font-medium text-amber-800"
+                            title={`Submitted ${ev.latestRequest?.createdAt ? formatRelativeTime(ev.latestRequest.createdAt) : ''} · Duration: ${ev.latestRequest?.requestedDuration || '1h'}`}
+                          >
+                            <Clock size={12} className="animate-spin text-amber-600 shrink-0" />
+                            Request Sent — Awaiting Organization Admin
+                          </span>
+                        ) : ev.userAccessStatus === 'approved' ? (
+                          <Link
+                            to={`/superadmin/evidence/${ev._id}`}
+                            className="inline-flex items-center gap-1 rounded-[7px] bg-brand px-2.5 py-1.5 text-[12px] font-medium text-white shadow-xs transition hover:bg-brand-hover"
+                            title={ev.activePermission?.isOwner ? 'Owner access' : `Approved access until ${ev.latestRequest?.expiresAt ? formatDate(ev.latestRequest.expiresAt) : 'expiry'}`}
+                          >
+                            <Unlock size={12} />
+                            View Evidence
+                          </Link>
+                        ) : ev.userAccessStatus === 'rejected' ? (
+                          <>
+                            <span
+                              className="inline-flex items-center gap-1 rounded-[6px] border border-danger/30 bg-danger-soft px-1.5 py-0.5 text-[10.5px] font-medium text-danger"
+                              title={ev.latestRequest?.rejectionReason ? `Reason: ${ev.latestRequest.rejectionReason}` : 'Request rejected'}
+                            >
+                              Rejected
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => { setSelectedEvidence(ev); setShowRequestModal(true); }}
+                              className="btn-secondary btn-sm"
+                              title="Submit a new view access request"
+                            >
+                              <RefreshCw size={12} />
+                              Request Again
+                            </button>
+                          </>
+                        ) : ev.userAccessStatus === 'expired' ? (
+                          <>
+                            <span
+                              className="inline-flex items-center gap-1 rounded-[6px] border border-line bg-surface px-1.5 py-0.5 text-[10.5px] font-medium text-ink-muted"
+                              title="Temporary view access has expired"
+                            >
+                              Expired
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => { setSelectedEvidence(ev); setShowRequestModal(true); }}
+                              className="btn-secondary btn-sm"
+                              title="Request view access again"
+                            >
+                              <RefreshCw size={12} />
+                              Request Again
+                            </button>
+                          </>
+                        ) : ev.userAccessStatus === 'revoked' ? (
+                          <>
+                            <span
+                              className="inline-flex items-center gap-1 rounded-[6px] border border-rose-300 bg-rose-50 px-1.5 py-0.5 text-[10.5px] font-medium text-rose-700"
+                              title={ev.latestRequest?.revocationReason ? `Revoked: ${ev.latestRequest.revocationReason}` : 'Access was revoked'}
+                            >
+                              Revoked
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => { setSelectedEvidence(ev); setShowRequestModal(true); }}
+                              className="btn-secondary btn-sm"
+                              title="Request view access again"
+                            >
+                              <RefreshCw size={12} />
+                              Request Again
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedEvidence(ev); setShowRequestModal(true); }}
+                            className="btn-primary btn-sm"
+                            title="Request temporary view access"
+                          >
+                            <Shield size={12} />
+                            Request View Access
+                          </button>
+                        )}
+
+                        <Link
+                          to={`/superadmin/evidence/${ev._id}`}
+                          className="inline-flex items-center gap-1 rounded-[7px] px-2 py-1.5 text-[12px] font-medium text-ink-muted transition hover:bg-surface hover:text-ink"
+                          title="View metadata and audit details"
+                        >
+                          <Eye size={13} />
+                          Details
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -320,6 +474,22 @@ export default function GlobalEvidence() {
           )}
         </section>
       )}
+
+      <RequestViewAccessModal
+        open={showRequestModal}
+        onClose={() => setShowRequestModal(false)}
+        initialTargetType="evidence"
+        initialTargetId={selectedEvidence?._id || ''}
+        initialTargetName={selectedEvidence?.fileName || ''}
+        initialOrgId={selectedEvidence?.organizationId?._id || selectedEvidence?.organizationId || ''}
+        lockedTarget={Boolean(selectedEvidence)}
+        targetCaseId={selectedEvidence?.caseId || ''}
+        targetGroupId={selectedEvidence?.groupId?._id || selectedEvidence?.groupId || ''}
+        targetGroupName={selectedEvidence?.groupId?.name || ''}
+        onSuccess={() => {
+          refetch();
+        }}
+      />
     </div>
   );
 }

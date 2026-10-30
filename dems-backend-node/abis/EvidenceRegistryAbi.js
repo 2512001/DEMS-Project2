@@ -221,6 +221,31 @@ const evidenceRegistryAbi = [
     "inputs": [
       {
         "indexed": true,
+        "internalType": "address",
+        "name": "registrar",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "grantedBy",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "RegistrarGranted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
         "internalType": "bytes32",
         "name": "role",
         "type": "bytes32"
@@ -318,6 +343,19 @@ const evidenceRegistryAbi = [
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "REGISTRAR_ROLE",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "string",
@@ -364,6 +402,39 @@ const evidenceRegistryAbi = [
       }
     ],
     "name": "addEvidence",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "evidenceId",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "fileHash",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "ipfsCID",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "aiScore",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "uploaderWallet",
+        "type": "address"
+      }
+    ],
+    "name": "addEvidenceByRegistrar",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -521,6 +592,19 @@ const evidenceRegistryAbi = [
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "registrar",
+        "type": "address"
+      }
+    ],
+    "name": "grantRegistrar",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "bytes32",
         "name": "role",
         "type": "bytes32"
@@ -545,6 +629,25 @@ const evidenceRegistryAbi = [
       }
     ],
     "name": "hasOfficerRole",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "hasRegistrarRole",
     "outputs": [
       {
         "internalType": "bool",

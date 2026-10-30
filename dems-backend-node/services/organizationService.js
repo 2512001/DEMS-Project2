@@ -18,13 +18,18 @@ async function ensureAdminOrganization(user) {
 
     if (user.organizationId) {
         const organization = await Organization.findById(user.organizationId);
-        if (!organization) {
-            throw httpError(409, 'Organization record is missing. Recreate it from Organization Settings.');
+        if (organization) {
+            return organization;
         }
-        return organization;
     }
 
-    const existing = await Organization.findOne({ createdBy: user.id }).sort({ createdAt: 1 });
+    const existing = await Organization.findOne({
+        $or: [
+            { adminId: user.id },
+            { createdBy: user.id }
+        ]
+    }).sort({ createdAt: 1 });
+
     if (existing) {
         await User.findByIdAndUpdate(user.id, { $set: { organizationId: existing._id } });
         user.organizationId = existing._id.toString();

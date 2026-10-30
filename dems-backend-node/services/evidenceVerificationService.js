@@ -1,4 +1,5 @@
 const EvidenceModel = require('../model/evidenceModel');
+const PendingUploadRequest = require('../model/pendingUploadRequestModel');
 const { getOnChainEvidence } = require('./blockchainService');
 const { decryptFile, computeSha256 } = require('./cryptoService');
 const { fetchEncryptedBlobFromIpfs } = require('./ipfsService');
@@ -101,6 +102,7 @@ async function verifyEvidenceIntegrity(evidenceId, requester) {
     }
 
     let onChain = null;
+    let pendingUploadDoc = null;
     const chainRequested = Boolean(evidence.blockchainRequested) || evidence.blockchainStatus === 'confirmed' || Boolean(evidence.blockchainTxHash);
 
     if (!chainRequested) {
@@ -111,7 +113,17 @@ async function verifyEvidenceIntegrity(evidenceId, requester) {
             stages.blockchain = { available: true, detail: 'On-chain evidence record was read.' };
         } catch (error) {
             if (error.code === 'EVIDENCE_NOT_ON_CHAIN') {
-                stages.blockchain = { available: false, detail: 'Evidence is not registered on the configured contract.' };
+                pendingUploadDoc = await PendingUploadRequest.findOne({ 'systemFinalization.evidenceId': evidence._id }).select('evidenceId');
+                if (pendingUploadDoc?.evidenceId) {
+                    try {
+                        onChain = await getOnChainEvidence(pendingUploadDoc.evidenceId);
+                        stages.blockchain = { available: true, detail: 'On-chain evidence record was read.' };
+                    } catch (innerErr) {
+                        stages.blockchain = { available: false, detail: 'Evidence is not registered on the configured contract.' };
+                    }
+                } else {
+                    stages.blockchain = { available: false, detail: 'Evidence is not registered on the configured contract.' };
+                }
             } else if (isAvailabilityError(error)) {
                 stages.blockchain = { available: false, detail: error.message };
             } else {
@@ -138,7 +150,7 @@ async function verifyEvidenceIntegrity(evidenceId, requester) {
         : false;
     const cidMatched = Boolean(onChain && cidEquals(mongoIpfsCID, chainIpfsCID));
     const uploaderMatched = Boolean(onChain && mongoUploader && chainUploader && mongoUploader === chainUploader);
-    const evidenceIdMatched = Boolean(onChain && mongoEvidenceId && chainEvidenceId && mongoEvidenceId === chainEvidenceId);
+    const evidenceIdMatched = Boolean(onChain && ((mongoEvidenceId && chainEvidenceId && mongoEvidenceId === chainEvidenceId) || (pendingUploadDoc && normalizeId(pendingUploadDoc.evidenceId) === chainEvidenceId)));
 
     const incomplete = !stages.ipfs.available || (chainRequested && !stages.blockchain.available);
 
@@ -258,30 +270,35 @@ async function verifyEvidenceIntegrity(evidenceId, requester) {
         metadata: { verificationStatus, stages }
     });
 
+    const sanitizedChecks = checks.map((c) => ({
+        field: c.field,
+        label: c.label,
+        mongodb: c.status === 'MATCH' ? 'Matched' : (c.mongodb ? 'Available' : '—'),
+        ipfs: c.status === 'MATCH' ? 'Matched' : (c.ipfs ? 'Available' : '—'),
+        blockchain: c.status === 'MATCH' ? 'Matched' : (c.blockchain ? 'Available' : '—'),
+        matched: c.matched,
+        status: c.status
+    }));
+
+    const sanitizedMismatches = mismatches.map((m) => ({
+        field: m.field,
+        expected: 'Recorded proof',
+        actual: 'Mismatch detected'
+    }));
+
     return {
         verificationStatus,
         verifiedAt: new Date().toISOString(),
-        blockchainData,
-        sources: {
-            mongodb: {
-                evidenceId: evidence._id.toString(),
-                fileHash: evidence.fileHash,
-                ipfsCID: evidence.ipfsCID,
-                uploadedBy: evidence.UploaderWallet,
-                createdAt: evidence.createdAt,
-                transactionHash: evidence.blockchainTxHash || null
-            },
-            ipfs: {
-                cid: evidence.ipfsCID,
-                recoveredFileHash: generatedHash,
-                available: stages.ipfs.available,
-                detail: stages.ipfs.detail
-            },
-            blockchain: blockchainData
+        verification: {
+            ipfsStorage: stages.ipfs.available ? 'Verified' : 'Failed',
+            blockchainIntegrity: stages.blockchain.available ? 'Verified' : 'Failed',
+            integrityCheck: allChecksPassed ? 'Passed' : 'Failed',
+            evidenceStatus: 'Finalized',
+            lastVerified: new Date().toISOString()
         },
-        checks,
+        checks: sanitizedChecks,
         comparisons,
-        mismatches,
+        mismatches: sanitizedMismatches,
         stages,
         message
     };

@@ -9,7 +9,8 @@ const {
     getOrganizationDetails,
     getOrganizationAdmins,
     resolveOrganizationByCode,
-    updateOrganizationStatus
+    updateOrganizationStatus,
+    getActiveOrganizations
 } = require('../controllers/organizationController');
 const { protect } = require('../middleware/authMiddleware');
 const { authorizeRoles } = require('../middleware/roleMiddleware');
@@ -26,8 +27,11 @@ router.post('/create', protect, authorizeRoles('super_admin'), createOrganizatio
 router.post('/assign-admin', protect, authorizeRoles('super_admin'), assignOrganizationAdmin);
 router.put('/:organizationId/status', protect, authorizeRoles('super_admin'), updateOrganizationStatus);
 
+// Active organizations lookup for authenticated users (citizens, officers, admins)
+router.get('/active', protect, getActiveOrganizations);
+
 // Organization Admin endpoints (static paths)
-router.get('/me', protect, getMyOrganization);
+router.get('/me', protect, authorizeRoles('admin'), getMyOrganization);
 router.get('/overview', protect, authorizeRoles('admin'), getOrganizationOverview);
 router.put('/settings', protect, authorizeRoles('admin'), updateOrganizationSettings);
 
@@ -35,7 +39,7 @@ router.put('/settings', protect, authorizeRoles('admin'), updateOrganizationSett
 router.get('/resolve/:code', protect, resolveOrganizationByCode);
 
 // Dynamic organization routes — keep LAST so they do not shadow static routes above
-router.get('/:organizationId', protect, getOrganizationDetails);
-router.get('/:organizationId/admins', protect, getOrganizationAdmins);
+router.get('/:organizationId', protect, authorizeRoles('admin', 'super_admin'), getOrganizationDetails);
+router.get('/:organizationId/admins', protect, authorizeRoles('admin', 'super_admin'), getOrganizationAdmins);
 
 module.exports = router;

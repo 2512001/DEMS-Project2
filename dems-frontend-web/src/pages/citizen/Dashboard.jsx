@@ -26,7 +26,7 @@ function StorageIntegrityPanel({ overview, files, isLoading }) {
   const total = overview?.totalEvidence ?? 0;
   const chainConfirmed = overview?.blockchainConfirmedEvidence ?? 0;
   const integrityVerified = overview?.verifiedEvidence ?? 0;
-  const ipfsCount = files.filter((file) => file.storageStatus === 'ipfs' || file.ipfsCID).length;
+  const ipfsCount = files.filter((file) => file.verification?.ipfsStorage === 'Verified' || file.storageStatus === 'ipfs' || file.ipfsCID).length;
 
   const rows = [
     {
@@ -106,7 +106,7 @@ export default function CitizenDashboard() {
   const overview = analytics.data?.overview;
   const totalFiles = filesQuery.data?.pagination?.totalRecords ?? overview?.totalEvidence ?? 0;
   const blockchainVerified = overview?.blockchainConfirmedEvidence ?? 0;
-  const ipfsStored = files.filter((file) => file.storageStatus === 'ipfs' || file.ipfsCID).length;
+  const ipfsStored = files.filter((file) => file.verification?.ipfsStorage === 'Verified' || file.storageStatus === 'ipfs' || file.ipfsCID).length;
 
   const loading = filesQuery.isLoading || analytics.isLoading;
   const firstName = (user?.profile?.displayName || '').split(' ')[0];

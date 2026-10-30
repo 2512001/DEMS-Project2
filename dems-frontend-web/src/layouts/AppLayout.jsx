@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getWorkflowCounts } from '../api/viewAccess.js';
+import { subscribeToViewAccessEvents, subscribeToUploadEvents } from '../api/socket.js';
 import {
   Archive,
   BadgeCheck,
@@ -16,6 +19,7 @@ import {
   Settings,
   ShieldAlert,
   UploadCloud,
+  Eye,
   User,
   Users,
   FolderTree,
@@ -77,6 +81,8 @@ const NAVIGATION = {
       group: 'Organization',
       items: [
         { label: 'Dashboard', to: '/admin/dashboard', icon: LayoutDashboard },
+        { label: 'View Access Requests', to: '/admin/view-requests', icon: Eye },
+        { label: 'Upload Approval Requests', to: '/admin/upload-requests', icon: UploadCloud },
         { label: 'Files', to: '/admin/evidence', icon: FolderLock },
         { label: 'Employees', to: '/admin/users', icon: Users },
         { label: 'Groups', to: '/admin/groups', icon: FolderTree },
@@ -86,7 +92,7 @@ const NAVIGATION = {
     {
       group: 'Security',
       items: [
-        { label: 'Pending uploads', to: '/admin/pending-uploads', icon: UploadCloud },
+
         { label: 'Quarantine', to: '/admin/quarantine', icon: ShieldAlert },
         { label: 'Modification requests', to: '/admin/modifications', icon: FileSearch },
         { label: 'Audit log', to: '/admin/audit-logs', icon: ClipboardList }
@@ -104,7 +110,8 @@ const NAVIGATION = {
         { label: 'Platform overview', to: '/superadmin/dashboard', icon: LayoutDashboard },
         { label: 'Users', to: '/superadmin/users', icon: Users },
         { label: 'Evidence', to: '/superadmin/evidence', icon: FolderLock },
-        { label: 'Pending uploads', to: '/superadmin/pending-uploads', icon: UploadCloud },
+        { label: 'View Access Requests', to: '/superadmin/view-requests', icon: Eye },
+        { label: 'Upload Approval Requests', to: '/superadmin/upload-requests', icon: UploadCloud },
         { label: 'Blockchain', to: '/superadmin/blockchain', icon: Archive },
         { label: 'Storage', to: '/superadmin/storage', icon: FileSearch },
         { label: 'Retention', to: '/superadmin/retention', icon: Trash2 }
@@ -135,8 +142,10 @@ const PAGE_NAMES = {
   '/admin/officer-approval': 'Employee approval',
   '/admin/users': 'Employees',
   '/admin/evidence': 'Files',
+  '/admin/view-requests': 'View Access Requests',
   '/admin/quarantine': 'Quarantine',
-  '/admin/pending-uploads': 'Pending uploads',
+  '/admin/upload-requests': 'Upload Approval Requests',
+  '/admin/pending-uploads': 'Upload Approval Requests',
   '/admin/modifications': 'Modification requests',
   '/admin/organization': 'Organization settings',
   '/admin/audit-logs': 'Audit log',
@@ -144,7 +153,9 @@ const PAGE_NAMES = {
   '/superadmin/dashboard': 'Platform overview',
   '/superadmin/users': 'Users',
   '/superadmin/evidence': 'Evidence',
-  '/superadmin/pending-uploads': 'Pending uploads',
+  '/superadmin/view-requests': 'View Access Requests',
+  '/superadmin/upload-requests': 'Upload Approval Requests',
+  '/superadmin/pending-uploads': 'Upload Approval Requests',
   '/superadmin/blockchain': 'Blockchain',
   '/superadmin/storage': 'Storage',
   '/superadmin/retention': 'Retention'
@@ -160,7 +171,32 @@ const DETAILS_BASE = {
 const STORAGE_KEY = 'dems.sidebar.collapsed';
 
 function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile, role }) {
+  const location = useLocation();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const groups = NAVIGATION[role] || NAVIGATION.citizen;
+
+  const countsQuery = useQuery({
+    queryKey: ['workflow-counts'],
+    queryFn: getWorkflowCounts,
+    enabled: Boolean(user),
+    refetchInterval: 15000
+  });
+
+  useEffect(() => {
+    const unsubView = subscribeToViewAccessEvents(() => {
+      queryClient.invalidateQueries({ queryKey: ['workflow-counts'] });
+    });
+    const unsubUpload = subscribeToUploadEvents(() => {
+      queryClient.invalidateQueries({ queryKey: ['workflow-counts'] });
+    });
+    return () => {
+      unsubView();
+      unsubUpload();
+    };
+  }, [queryClient]);
+  const pendingViewCount = countsQuery.data?.data?.pendingViewApprovals || 0;
+  const pendingUploadCount = countsQuery.data?.data?.pendingUploadApprovals || 0;
 
   return (
     <>
@@ -202,12 +238,29 @@ function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile, role 
                         end
                         onClick={onCloseMobile}
                         title={collapsed ? item.label : undefined}
-                        className={({ isActive }) =>
-                          `nav-link ${isActive ? 'nav-link-active' : ''} ${collapsed ? 'lg:justify-center lg:px-0' : ''}`
-                        }
+                        className={({ isActive }) => {
+                          const isCustomActive = isActive || (item.to === '/admin/upload-requests' && (location.pathname.startsWith('/admin/upload-requests') || location.pathname.startsWith('/admin/pending-uploads'))) || (item.to === '/superadmin/upload-requests' && (location.pathname.startsWith('/superadmin/upload-requests') || location.pathname.startsWith('/superadmin/pending-uploads')));
+                          return `nav-link ${isCustomActive ? 'nav-link-active' : ''} ${collapsed ? 'lg:justify-center lg:px-0' : ''}`;
+                        }}
                       >
                         <Icon size={16} strokeWidth={1.9} className="shrink-0" aria-hidden="true" />
                         <span className={collapsed ? 'lg:hidden' : ''}>{item.label}</span>
+                        {!collapsed && item.to?.includes('/view-requests') && pendingViewCount > 0 && (
+                          <span className="ml-auto rounded-full bg-brand px-1.5 py-0.2 text-[10.5px] font-bold text-white">
+                            {pendingViewCount}
+                          </span>
+                        )}
+                        {!collapsed && item.to?.includes('/upload-requests') && pendingUploadCount > 0 && (
+                          <span className="ml-auto rounded-full bg-warn px-1.5 py-0.2 text-[10.5px] font-bold text-white">
+                            {pendingUploadCount}
+                          </span>
+                        )}
+                        {collapsed && item.to?.includes('/view-requests') && pendingViewCount > 0 && (
+                          <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-brand ring-2 ring-card" />
+                        )}
+                        {collapsed && item.to?.includes('/upload-requests') && pendingUploadCount > 0 && (
+                          <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-warn ring-2 ring-card" />
+                        )}
                       </NavLink>
                     </li>
                   );
@@ -348,6 +401,21 @@ export default function AppLayout({ section }) {
   }, [collapsed]);
 
   const sectionKey = section === 'superadmin' ? 'super_admin' : section;
+
+  // Validate that the section matches the user's role to prevent layout mismatches
+  // This ensures that even if a user somehow bypasses route guards, they cannot
+  // render another role's layout
+  if (role && sectionKey !== role) {
+    console.warn('[LAYOUT] Section mismatch - role:', role, 'section:', sectionKey);
+    // Redirect to the appropriate dashboard for the user's role
+    const redirectPath =
+      role === 'super_admin' ? '/superadmin/dashboard' :
+      role === 'admin' ? '/admin/dashboard' :
+      role === 'officer' ? '/officer/dashboard' :
+      '/citizen/dashboard';
+    return <Navigate to={redirectPath} replace />;
+  }
+
   const gridClass = useMemo(
     () => (collapsed ? 'lg:grid-cols-[72px_minmax(0,1fr)]' : 'lg:grid-cols-[248px_minmax(0,1fr)]'),
     [collapsed]

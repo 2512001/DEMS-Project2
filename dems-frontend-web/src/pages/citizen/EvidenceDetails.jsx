@@ -1,32 +1,40 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Zoom from 'react-medium-image-zoom';
 import 'react-medium-image-zoom/dist/styles.css';
 
 import {
   AlertTriangle,
+  Archive,
   ArrowLeft,
   Building2,
   Calendar,
   ChevronDown,
-  Download,
+  Clock,
+  Eye,
   FileText,
   Fingerprint,
   HardDrive,
   Link2,
   Lock,
+  Plus,
   Shield,
   ShieldCheck,
-  User as UserIcon
+  Unlock,
+  User as UserIcon,
+  XCircle,
+  Ban
 } from 'lucide-react';
 
 import StatusBadge from '../../components/StatusBadge.jsx';
 import VerificationButton from '../../components/verification/VerificationButton.jsx';
 import VerificationResultCard from '../../components/verification/VerificationResultCard.jsx';
+import VerificationStatusPanel from '../../components/verification/VerificationStatusPanel.jsx';
 import PageHeader from '../../components/ui/PageHeader.jsx';
 import FileTypeIcon from '../../components/ui/FileTypeIcon.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
+import RequestViewAccessModal from '../../components/viewAccess/RequestViewAccessModal.jsx';
 import { formatBytes, formatDate, formatRelativeTime } from '../../utils/format.js';
 import { downloadEvidence, verifyEvidenceBlockchain } from '../../api/evidence.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
@@ -104,8 +112,12 @@ export default function EvidenceDetails() {
   const { evidenceId } = useParams();
   const location = useLocation();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [verificationError, setVerificationError] = useState('');
+  const [showRequestModal, setShowRequestModal] = useState(false);
+  const [requestScope, setRequestScope] = useState('evidence');
+  const [countdown, setCountdown] = useState('');
 
   // Determine back link based on user role and referrer
   const getBackLink = () => {
@@ -154,7 +166,39 @@ export default function EvidenceDetails() {
   }, [verifyMutation.isPending]);
 
   const evidence = data?.data;
-  const canViewImage = user?.role === 'admin' || user?.role === 'super_admin';
+  const activePermission = evidence?.activePermission;
+  const latestRequest = evidence?.latestRequest;
+  const userAccessStatus = evidence?.userAccessStatus || (evidence?.canViewImage ? 'approved' : 'access_required');
+  const isPrivilegedUser = user?.role === 'admin' || user?.role === 'super_admin';
+  const canViewImage = Boolean(evidence?.canViewImage && evidence?.fileContent);
+
+  useEffect(() => {
+    if (!activePermission?.expiresAt) {
+      setCountdown('');
+      return undefined;
+    }
+    const updateCountdown = () => {
+      const now = Date.now();
+      const expires = new Date(activePermission.expiresAt).getTime();
+      const diff = expires - now;
+      if (diff <= 0) {
+        setCountdown('Access Expired');
+        queryClient.invalidateQueries({ queryKey: ['evidence', evidenceId] });
+      } else {
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+        if (hours > 0) {
+          setCountdown(`${hours}h ${minutes}m ${seconds}s`);
+        } else {
+          setCountdown(`${minutes}m ${seconds}s`);
+        }
+      }
+    };
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [activePermission?.expiresAt, evidenceId, queryClient]);
 
   if (isLoading) {
     return (
@@ -247,12 +291,21 @@ export default function EvidenceDetails() {
             </>
           }
           actions={
-            canViewImage && fileUrl ? (
-              <a href={fileUrl} download={evidence.fileName} className="btn-primary">
-                <Download size={15} />
-                Download
-              </a>
-            ) : null
+            userAccessStatus === 'pending' ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-warn/30 bg-warn-soft px-3 py-1.5 text-[12px] font-medium text-warn">
+                <Clock size={13} className="animate-pulse" />
+                Request Pending Review
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { setRequestScope('evidence'); setShowRequestModal(true); }}
+                className="btn-primary"
+              >
+                <Eye size={15} />
+                Request View Access
+              </button>
+            )
           }
         />
       </div>
@@ -261,12 +314,24 @@ export default function EvidenceDetails() {
         <div className="space-y-5">
           {canViewImage && isPreviewable ? (
             <section className="panel overflow-hidden">
+              {activePermission && !activePermission.isOwner && (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-success/20 bg-success-soft px-4 py-2.5">
+                  <div className="flex items-center gap-2 text-success text-[12.5px] font-medium">
+                    <Unlock size={15} />
+                    <span>Temporary View Access Active ({activePermission.scope?.toUpperCase()} Scope)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[12px] font-semibold text-success">
+                    <Clock size={13} />
+                    <span>Expires in: {countdown || 'Active'}</span>
+                  </div>
+                </div>
+              )}
               <div className="card-header">
                 <div className="flex items-center gap-3">
                   <FileTypeIcon mimeType={evidence.mimeType} fileName={evidence.fileName} size="sm" />
                   <div>
-                    <h2 className="section-title">Preview</h2>
-                    <p className="section-subtitle">Decrypted for your session</p>
+                    <h2 className="section-title">Decrypted Preview</h2>
+                    <p className="section-subtitle">Decrypted in-memory for your authorized session</p>
                   </div>
                 </div>
               </div>
@@ -288,15 +353,138 @@ export default function EvidenceDetails() {
                 )}
               </div>
             </section>
-          ) : !canViewImage ? (
-            <section className="panel flex items-center gap-3 p-4">
-              <FileTypeIcon mimeType={evidence.mimeType} fileName={evidence.fileName} size="sm" />
-              <div>
-                <h2 className="section-title">Image details</h2>
-                <p className="section-subtitle">The original image is not displayed in the user interface.</p>
+          ) : userAccessStatus === 'pending' ? (
+            <section className="panel p-6 text-center border-l-4 border-l-warn">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-warn-soft text-warn mb-3">
+                <Clock size={22} className="animate-pulse" />
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-warn-soft text-warn text-[12px] font-semibold mb-2">
+                Request Pending
+              </div>
+              <h2 className="text-[16px] font-semibold text-ink">View Request Awaiting Approval</h2>
+              <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-relaxed text-ink-muted">
+                Your view access request <strong>{latestRequest?.requestId}</strong> for {latestRequest?.requestedDuration} is currently awaiting required administrative approval.
+              </p>
+              <div className="mt-4 rounded-[8px] border border-line bg-surface p-3 max-w-sm mx-auto text-left text-[12px] space-y-1 text-ink-muted">
+                <div><span className="text-ink font-medium">Target file:</span> {evidence.fileName}</div>
+                <div><span className="text-ink font-medium">Requested:</span> {formatDate(latestRequest?.createdAt)}</div>
+                <div><span className="text-ink font-medium">Reason:</span> "{latestRequest?.reason}"</div>
               </div>
             </section>
-          ) : null}
+          ) : userAccessStatus === 'rejected' ? (
+            <section className="panel p-6 text-center border-l-4 border-l-danger">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-danger-soft text-danger mb-3">
+                <XCircle size={22} />
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-danger-soft text-danger text-[12px] font-semibold mb-2">
+                Request Rejected
+              </div>
+              <h2 className="text-[16px] font-semibold text-ink">View Request Not Approved</h2>
+              <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-relaxed text-ink-muted">
+                Your previous request <strong>{latestRequest?.requestId}</strong> was rejected.
+                {latestRequest?.rejectionReason && (
+                  <span className="block mt-1 text-danger font-medium">"{latestRequest.rejectionReason}"</span>
+                )}
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => { setRequestScope('evidence'); setShowRequestModal(true); }}
+                  className="btn-primary"
+                >
+                  <Eye size={14} />
+                  Submit New Request
+                </button>
+              </div>
+            </section>
+          ) : userAccessStatus === 'expired' ? (
+            <section className="panel p-6 text-center border-l-4 border-l-line">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-surface text-ink-muted mb-3">
+                <Clock size={22} />
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface text-ink-muted text-[12px] font-semibold mb-2">
+                Access Expired
+              </div>
+              <h2 className="text-[16px] font-semibold text-ink">View Access Has Expired</h2>
+              <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-relaxed text-ink-muted">
+                Your approved viewing period for this evidence has ended. Submit a new view access request if you require continued inspection.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => { setRequestScope('evidence'); setShowRequestModal(true); }}
+                  className="btn-primary"
+                >
+                  <Eye size={14} />
+                  Request View Access
+                </button>
+              </div>
+            </section>
+          ) : userAccessStatus === 'revoked' ? (
+            <section className="panel p-6 text-center border-l-4 border-l-danger">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-danger-soft text-danger mb-3">
+                <Ban size={22} />
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-danger-soft text-danger text-[12px] font-semibold mb-2">
+                Access Revoked
+              </div>
+              <h2 className="text-[16px] font-semibold text-ink">View Permission Revoked</h2>
+              <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-relaxed text-ink-muted">
+                Your active view permission for this file was revoked by an administrator
+                {latestRequest?.revocationReason ? `: "${latestRequest.revocationReason}"` : '.'}
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => { setRequestScope('evidence'); setShowRequestModal(true); }}
+                  className="btn-primary"
+                >
+                  <Eye size={14} />
+                  Request View Access
+                </button>
+              </div>
+            </section>
+          ) : (
+            <section className="panel p-6 text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-soft text-brand mb-3">
+                <Lock size={22} />
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-brand-soft text-brand text-[12px] font-semibold mb-2">
+                Access Required
+              </div>
+              <h2 className="text-[16px] font-semibold text-ink">Protected Evidence Content</h2>
+              <p className="mx-auto mt-1 max-w-md text-[13px] leading-relaxed text-ink-muted">
+                Under DEMS Two-Way Authorization rules, viewing decrypted evidence requires prior approval. Request temporary access to inspect this file.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => { setRequestScope('evidence'); setShowRequestModal(true); }}
+                  className="btn-primary"
+                >
+                  <Eye size={14} />
+                  Request View Access (Evidence)
+                </button>
+                {evidence.caseId && (
+                  <button
+                    type="button"
+                    onClick={() => { setRequestScope('case'); setShowRequestModal(true); }}
+                    className="btn-secondary"
+                  >
+                    <Archive size={14} />
+                    Request Case Access ({evidence.caseId})
+                  </button>
+                )}
+              </div>
+              <p className="mt-4 border-t border-line pt-3 text-[12px] text-ink-faint">
+                {user?.role === 'admin'
+                  ? 'Request will be sent to Super Admin for authorization.'
+                  : user?.role === 'super_admin'
+                  ? 'Request will be sent to the relevant Organization Admin for authorization.'
+                  : 'Request will be sent to your Organization Admin for review.'}
+              </p>
+            </section>
+          )}
 
           <section className="section-card">
             <h2 className="section-title">File information</h2>
@@ -354,39 +542,11 @@ export default function EvidenceDetails() {
                   </p>
                 </div>
               </li>
-              <li className="flex items-start gap-2.5">
-                <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-[7px] bg-brand-soft text-brand">
-                  <HardDrive size={14} />
-                </span>
-                <div>
-                  <p className="text-[13px] font-medium text-ink">
-                    IPFS storage: {evidence.ipfsCID ? 'available' : 'not stored'}
-                  </p>
-                  <p className="text-[12px] leading-5 text-ink-faint">
-                    {evidence.ipfsCID
-                      ? 'Content is retrievable by its content identifier.'
-                      : 'This file has no decentralized storage record.'}
-                  </p>
-                </div>
-              </li>
-              <li className="flex items-start gap-2.5">
-                <span className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-[7px] ${
-                  evidence.blockchainTxHash ? 'bg-success-soft text-success' : 'bg-surface text-ink-muted'
-                }`}>
-                  <ShieldCheck size={14} />
-                </span>
-                <div>
-                  <p className="text-[13px] font-medium text-ink">
-                    Blockchain integrity: {evidence.blockchainTxHash ? 'recorded' : 'not requested'}
-                  </p>
-                  <p className="text-[12px] leading-5 text-ink-faint">
-                    {evidence.blockchainTxHash
-                      ? 'An on-chain hash proves the file has not changed since verification.'
-                      : 'No on-chain proof exists for this file.'}
-                  </p>
-                </div>
-              </li>
+
             </ul>
+            <div className="mt-4">
+              <VerificationStatusPanel item={evidence} />
+            </div>
           </section>
 
           <section className="section-card">
@@ -405,7 +565,7 @@ export default function EvidenceDetails() {
               </TechnicalSection>
 
               <TechnicalSection title="IPFS storage" description="Decentralized content addressable storage">
-                {evidence.ipfsCID ? (
+                {evidence.verification?.ipfsStorage === 'Verified' || evidence.storageStatus === 'ipfs' || evidence.ipfsCID ? (
                   <div className="flex items-center gap-2">
                     <Link2 size={13} className="shrink-0 text-ink-faint" />
                     <span className="text-[13px] text-ink">Stored on IPFS</span>
@@ -416,7 +576,7 @@ export default function EvidenceDetails() {
               </TechnicalSection>
 
               <TechnicalSection title="Blockchain transaction" description="On-chain integrity proof">
-                {evidence.blockchainTxHash ? (
+                {evidence.verification?.blockchainIntegrity === 'Verified' || evidence.blockchainStatus === 'confirmed' || evidence.blockchainTxHash ? (
                   <div className="flex items-center gap-2">
                     <Shield size={13} className="shrink-0 text-ink-faint" />
                     <span className="text-[13px] text-ink">Recorded on blockchain</span>
@@ -451,7 +611,7 @@ export default function EvidenceDetails() {
             </p>
 
             <div className="mt-4">
-              {evidence.status === 'stored_on_chain' || evidence.blockchainTxHash ? (
+              {evidence.verification?.blockchainIntegrity === 'Verified' || evidence.status === 'stored_on_chain' || evidence.blockchainTxHash ? (
                 <VerificationButton
                   onVerify={() => verifyMutation.mutate()}
                   isLoading={verifyMutation.isPending}
@@ -472,6 +632,19 @@ export default function EvidenceDetails() {
       </div>
 
       {verifyMutation.data ? <VerificationResultCard result={verifyMutation.data} /> : null}
+
+      <RequestViewAccessModal
+        open={showRequestModal}
+        onClose={() => setShowRequestModal(false)}
+        initialTargetType={requestScope}
+        initialTargetId={requestScope === 'case' ? (evidence.caseId || '') : evidence._id}
+        initialTargetName={requestScope === 'case' ? `Case ${evidence.caseId}` : evidence.fileName}
+        initialOrgId={evidence.organizationId?._id || evidence.organizationId || ''}
+        lockedTarget
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ['evidence', evidenceId] });
+        }}
+      />
     </div>
   );
 }

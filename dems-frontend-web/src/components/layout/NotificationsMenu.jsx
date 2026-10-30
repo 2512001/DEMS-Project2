@@ -1,24 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Bell, CheckCircle2, X } from 'lucide-react';
+import { Bell, CheckCircle2, Shield, UploadCloud, Eye, X, Check } from 'lucide-react';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { listQuarantine, getOrganizationOverview } from '../../api/admin.js';
 import { getPlatformAnalytics } from '../../api/analytics.js';
-import { getNotifications, markAllNotificationsAsRead } from '../../api/notifications.js';
+import { getNotifications, markAllNotificationsAsRead, markNotificationAsRead } from '../../api/notifications.js';
+import { getWorkflowCounts } from '../../api/viewAccess.js';
 import { useToast } from '../../components/ui/Toast.jsx';
+import { subscribeToUploadEvents, subscribeToViewAccessEvents } from '../../api/socket.js';
+import { formatRelativeTime } from '../../utils/format.js';
 
-/**
- * Notification counts are derived from endpoints that already expose pending
- * work for the current role. Nothing is fabricated — when every counter is
- * zero we say so explicitly.
- */
 export default function NotificationsMenu() {
-  const { role } = useAuth();
+  const { role, user } = useAuth();
   const { push } = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
+  const navigate = useNavigate();
 
   const isAdmin = role === 'admin';
   const isOfficer = role === 'officer';
@@ -28,34 +27,54 @@ export default function NotificationsMenu() {
   const notifications = useQuery({
     queryKey: ['notifications'],
     queryFn: getNotifications,
-    enabled: isAdmin || isSuperAdmin,
-    refetchInterval: 30000 // Refetch every 30 seconds
+    enabled: Boolean(user),
+    refetchInterval: 30000
+  });
+
+  // Fetch unified real database workflow counters
+  const workflowCountsQuery = useQuery({
+    queryKey: ['workflow-counts'],
+    queryFn: getWorkflowCounts,
+    enabled: Boolean(user),
+    refetchInterval: 15000
   });
 
   const markAllRead = useMutation({
     mutationFn: markAllNotificationsAsRead,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      queryClient.invalidateQueries({ queryKey: ['workflow-counts'] });
     }
   });
 
-  const quarantine = useQuery({
-    queryKey: ['quarantine'],
-    queryFn: listQuarantine,
-    enabled: isAdmin || isOfficer
+  const markSingleRead = useMutation({
+    mutationFn: markNotificationAsRead,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      queryClient.invalidateQueries({ queryKey: ['workflow-counts'] });
+    }
   });
 
-  const overview = useQuery({
-    queryKey: ['org-overview'],
-    queryFn: getOrganizationOverview,
-    enabled: isAdmin
-  });
+  // Real-time socket events for both uploads and view requests
+  useEffect(() => {
+    const unsubUpload = subscribeToUploadEvents(() => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      queryClient.invalidateQueries({ queryKey: ['workflow-counts'] });
+      queryClient.invalidateQueries({ queryKey: ['org-overview'] });
+    });
 
-  const analytics = useQuery({
-    queryKey: ['platform-analytics'],
-    queryFn: getPlatformAnalytics,
-    enabled: isSuperAdmin
-  });
+    const unsubView = subscribeToViewAccessEvents(() => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      queryClient.invalidateQueries({ queryKey: ['workflow-counts'] });
+      queryClient.invalidateQueries({ queryKey: ['incoming-view-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['my-view-requests'] });
+    });
+
+    return () => {
+      unsubUpload();
+      unsubView();
+    };
+  }, [queryClient]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -73,169 +92,191 @@ export default function NotificationsMenu() {
     };
   }, [open]);
 
-  const items = [];
+  const counts = workflowCountsQuery.data?.data || {};
+  const unreadCount = counts.unreadNotifications ?? (notifications.data?.unreadCount || 0);
+  const pendingUploads = counts.pendingUploadApprovals || 0;
+  const pendingViewRequests = counts.pendingViewApprovals || 0;
+
+  const totalBadge = unreadCount + pendingUploads + pendingViewRequests;
+
   const notificationItems = notifications.data?.data || [];
-  const unreadCount = notifications.data?.unreadCount || 0;
 
-  // Add in-app notifications first
-  if (notificationItems.length > 0) {
-    notificationItems.forEach((notif) => {
-      items.push({
-        id: notif._id,
-        title: notif.title,
-        detail: notif.message,
-        to: notif.actionUrl || '#',
-        tone: notif.read ? 'neutral' : 'brand',
-        isNotification: true,
-        notificationId: notif._id
-      });
-    });
-  }
+  const handleNotificationClick = async (notif) => {
+    setOpen(false);
+    if (!notif.read) {
+      try {
+        await markSingleRead.mutateAsync(notif._id);
+      } catch (err) {
+        console.warn('Failed to mark read:', err);
+      }
+    }
 
-  // Then add derived counts (quarantine, applications, etc.)
-  if (isAdmin) {
-    const pendingReview = overview.data?.pendingReview || 0;
-    const pendingApplications = overview.data?.pendingApplications || 0;
-    const quarantined = quarantine.data?.data?.length || 0;
-    if (pendingReview > 0) {
-      items.push({
-        id: 'review',
-        title: 'Files awaiting review',
-        detail: `${pendingReview} quarantine record${pendingReview === 1 ? '' : 's'} need a decision`,
-        to: '/admin/quarantine',
-        tone: 'warn'
-      });
+    let targetUrl = notif.actionUrl;
+    if (notif.type?.startsWith('view_request_')) {
+      targetUrl = isSuperAdmin ? '/superadmin/view-requests' : '/admin/view-requests';
+    } else if (notif.type?.startsWith('upload_') || notif.metadata?.requestId) {
+      targetUrl = isSuperAdmin ? '/superadmin/upload-requests' : '/admin/upload-requests';
     }
-    if (pendingApplications > 0) {
-      items.push({
-        id: 'applications',
-        title: 'Employee applications',
-        detail: `${pendingApplications} membership request${pendingApplications === 1 ? '' : 's'} pending`,
-        to: '/admin/officer-approval',
-        tone: 'brand'
-      });
-    }
-    if (quarantined > 0 && pendingReview === 0) {
-      items.push({
-        id: 'quarantine',
-        title: 'Quarantine records',
-        detail: `${quarantined} file${quarantined === 1 ? '' : 's'} currently isolated`,
-        to: '/admin/quarantine',
-        tone: 'neutral'
-      });
-    }
-  }
 
-  if (isOfficer) {
-    const pending = (quarantine.data?.data || []).filter((item) => item.reviewStatus === 'pending_review').length;
-    if (pending > 0) {
-      items.push({
-        id: 'pending',
-        title: 'Files pending admin review',
-        detail: `${pending} upload${pending === 1 ? '' : 's'} waiting on your organization admin`,
-        to: '/officer/pending-reviews',
-        tone: 'warn'
-      });
+    if (targetUrl && targetUrl !== '#') {
+      navigate(targetUrl);
     }
-  }
-
-  if (isSuperAdmin) {
-    const pendingInvitations = analytics.data?.overview?.pendingInvitations || 0;
-    const quarantined = analytics.data?.overview?.quarantinedEvidence || 0;
-    if (pendingInvitations > 0) {
-      items.push({
-        id: 'invitations',
-        title: 'Pending invitations',
-        detail: `${pendingInvitations} invitation${pendingInvitations === 1 ? '' : 's'} not yet accepted`,
-        to: '/superadmin/dashboard',
-        tone: 'brand'
-      });
-    }
-    if (quarantined > 0) {
-      items.push({
-        id: 'quarantined',
-        title: 'Quarantined evidence',
-        detail: `${quarantined} record${quarantined === 1 ? '' : 's'} across the platform`,
-        to: '/superadmin/dashboard',
-        tone: 'warn'
-      });
-    }
-  }
-
-  const count = unreadCount + items.filter(item => !item.isNotification).length;
+  };
 
   return (
     <div className="relative" ref={containerRef}>
       <button
         type="button"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => setOpen((curr) => !curr)}
         className="icon-btn relative"
-        aria-label={count ? `Notifications (${count})` : 'Notifications'}
+        aria-label={totalBadge ? `Notifications (${totalBadge})` : 'Notifications'}
         aria-expanded={open}
       >
         <Bell size={16} />
-        {count > 0 ? (
-          <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-warn ring-2 ring-card" />
+        {totalBadge > 0 ? (
+          <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-white ring-2 ring-card">
+            {totalBadge > 99 ? '99+' : totalBadge}
+          </span>
         ) : null}
       </button>
 
       {open ? (
-        <div className="absolute right-0 top-11 z-50 w-[320px] animate-slide-up overflow-hidden rounded-card border border-line bg-card shadow-pop">
+        <div className="absolute right-0 top-11 z-50 w-[360px] animate-slide-up overflow-hidden rounded-card border border-line bg-card shadow-pop">
+          {/* Header */}
           <div className="flex items-center justify-between border-b border-line px-4 py-3">
-            <p className="text-[13px] font-semibold text-ink">Notifications</p>
-            <div className="flex items-center gap-2">
-              {unreadCount > 0 ? (
-                <button
-                  type="button"
-                  className="text-[11.5px] text-brand hover:underline"
-                  onClick={() => markAllRead.mutate()}
-                  disabled={markAllRead.isPending}
-                >
-                  Mark all read
-                </button>
-              ) : null}
-              {count > 0 ? <span className="badge-warn">{count}</span> : null}
+            <div>
+              <p className="text-[13px] font-semibold text-ink">Notifications & Tasks</p>
+              <p className="text-[11px] text-ink-faint">Live database activity</p>
             </div>
+            {unreadCount > 0 ? (
+              <button
+                type="button"
+                className="text-[11.5px] text-brand hover:underline font-medium"
+                onClick={() => markAllRead.mutate()}
+                disabled={markAllRead.isPending}
+              >
+                Mark all read
+              </button>
+            ) : null}
           </div>
-          {count === 0 ? (
-            <div className="flex items-start gap-2.5 px-4 py-6">
-              <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-success" />
-              <div>
-                <p className="text-[13px] font-medium text-ink">You&apos;re all caught up</p>
-                <p className="mt-0.5 text-[12.5px] leading-5 text-ink-muted">
-                  No pending reviews or approvals need your attention.
-                </p>
+
+          {/* Separate, accurate counts bar */}
+          {(isAdmin || isSuperAdmin) && (
+            <div className="grid grid-cols-3 divide-x divide-line border-b border-line bg-surface py-2 text-center text-[11.5px]">
+              <div className="px-1.5">
+                <span className="block text-ink-faint text-[10.5px]">Unread</span>
+                <span className={`font-semibold ${unreadCount > 0 ? 'text-brand' : 'text-ink-muted'}`}>
+                  {unreadCount}
+                </span>
               </div>
+              <Link
+                to={isSuperAdmin ? '/superadmin/upload-requests' : '/admin/upload-requests'}
+                onClick={() => setOpen(false)}
+                className="px-1.5 hover:bg-[#e8ebf0] transition rounded"
+              >
+                <span className="block text-ink-faint text-[10.5px]">Uploads</span>
+                <span className={`font-semibold ${pendingUploads > 0 ? 'text-warn' : 'text-ink-muted'}`}>
+                  {pendingUploads} pending
+                </span>
+              </Link>
+              <Link
+                to={isSuperAdmin ? '/superadmin/view-requests' : '/admin/view-requests'}
+                onClick={() => setOpen(false)}
+                className="px-1.5 hover:bg-[#e8ebf0] transition rounded"
+              >
+                <span className="block text-ink-faint text-[10.5px]">View Access</span>
+                <span className={`font-semibold ${pendingViewRequests > 0 ? 'text-success' : 'text-ink-muted'}`}>
+                  {pendingViewRequests} pending
+                </span>
+              </Link>
             </div>
-          ) : (
-            <ul className="divide-y divide-line">
-              {items.map((item) => (
-                <li key={item.id}>
-                  <Link
-                    to={item.to}
-                    onClick={() => {
-                      setOpen(false);
-                      if (item.isNotification) {
-                        // Mark as read when clicked (handled by backend on navigation)
-                        queryClient.invalidateQueries({ queryKey: ['notifications'] });
-                      }
-                    }}
-                    className="flex items-start gap-2.5 px-4 py-3 transition hover:bg-surface"
-                  >
-                    <span
-                      className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
-                        item.tone === 'warn' ? 'bg-warn' : item.tone === 'brand' ? 'bg-brand' : 'bg-ink-faint'
-                      }`}
-                    />
-                    <span className="min-w-0">
-                      <span className="block text-[13px] font-medium text-ink">{item.title}</span>
-                      <span className="mt-0.5 block text-[12.5px] leading-5 text-ink-muted">{item.detail}</span>
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
           )}
+
+          {/* Quick Pending Banners */}
+          {pendingViewRequests > 0 && (isAdmin || isSuperAdmin) && (
+            <Link
+              to={isSuperAdmin ? '/superadmin/view-requests' : '/admin/view-requests'}
+              onClick={() => setOpen(false)}
+              className="flex items-center justify-between border-b border-success/20 bg-success-soft px-4 py-2.5 transition hover:bg-success/15"
+            >
+              <div className="flex items-center gap-2">
+                <Eye size={15} className="text-success shrink-0" />
+                <span className="text-[12.5px] font-medium text-success">
+                  {pendingViewRequests} view access request{pendingViewRequests === 1 ? '' : 's'} awaiting review
+                </span>
+              </div>
+              <span className="text-[11px] font-semibold text-success hover:underline">Review &rarr;</span>
+            </Link>
+          )}
+
+          {pendingUploads > 0 && (isAdmin || isSuperAdmin) && (
+            <Link
+              to={isSuperAdmin ? '/superadmin/upload-requests' : '/admin/upload-requests'}
+              onClick={() => setOpen(false)}
+              className="flex items-center justify-between border-b border-warn/20 bg-warn-soft px-4 py-2.5 transition hover:bg-warn/15"
+            >
+              <div className="flex items-center gap-2">
+                <UploadCloud size={15} className="text-warn shrink-0" />
+                <span className="text-[12.5px] font-medium text-warn">
+                  {pendingUploads} upload request{pendingUploads === 1 ? '' : 's'} awaiting decision
+                </span>
+              </div>
+              <span className="text-[11px] font-semibold text-warn hover:underline">Review &rarr;</span>
+            </Link>
+          )}
+
+          {/* Notifications List */}
+          <div className="max-h-[380px] overflow-y-auto">
+            {notificationItems.length === 0 && totalBadge === 0 ? (
+              <div className="flex items-start gap-2.5 px-4 py-6">
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-success" />
+                <div>
+                  <p className="text-[13px] font-medium text-ink">You&apos;re all caught up</p>
+                  <p className="mt-0.5 text-[12px] leading-5 text-ink-muted">
+                    No pending view requests, uploads, or unread alerts.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <ul className="divide-y divide-line">
+                {notificationItems.map((notif) => {
+                  const isView = notif.type?.startsWith('view_request_');
+                  return (
+                    <li key={notif._id} className="relative group">
+                      <button
+                        type="button"
+                        onClick={() => handleNotificationClick(notif)}
+                        className={`w-full text-left flex items-start gap-2.5 px-4 py-3 transition hover:bg-surface cursor-pointer ${
+                          !notif.read ? 'bg-brand-soft/40' : ''
+                        }`}
+                      >
+                        <span
+                          className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                            !notif.read
+                              ? isView
+                                ? 'bg-brand ring-2 ring-brand-soft'
+                                : 'bg-warn ring-2 ring-warn-soft'
+                              : 'bg-ink-faint'
+                          }`}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[12.5px] font-semibold text-ink leading-tight">
+                            {notif.title}
+                          </p>
+                          <p className="mt-1 text-[12px] leading-snug text-ink-muted line-clamp-2">
+                            {notif.message}
+                          </p>
+                          <span className="mt-1 block text-[10.5px] text-ink-faint">
+                            {formatRelativeTime(notif.createdAt)}
+                          </span>
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </div>
       ) : null}
     </div>

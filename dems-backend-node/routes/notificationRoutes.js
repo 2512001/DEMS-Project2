@@ -5,10 +5,11 @@ const {
   markAllAsRead
 } = require('../services/notificationService');
 const { protect } = require('../middleware/authMiddleware');
+const { authorizeRoles } = require('../middleware/roleMiddleware');
 
 const router = express.Router();
 
-router.get('/', protect, async (req, res, next) => {
+router.get('/', protect, authorizeRoles('citizen', 'officer', 'admin', 'super_admin'), async (req, res, next) => {
   try {
     const { notifications, unreadCount } = await getNotificationsForUser(req.user.id, req.user.organizationId);
     res.json({
@@ -21,7 +22,7 @@ router.get('/', protect, async (req, res, next) => {
   }
 });
 
-router.put('/:notificationId/read', protect, async (req, res, next) => {
+router.put('/:notificationId/read', protect, authorizeRoles('citizen', 'officer', 'admin', 'super_admin'), async (req, res, next) => {
   try {
     const notification = await markNotificationAsRead(req.params.notificationId, req.user.id);
     res.json({
@@ -36,7 +37,7 @@ router.put('/:notificationId/read', protect, async (req, res, next) => {
   }
 });
 
-router.put('/read-all', protect, async (req, res, next) => {
+router.put('/read-all', protect, authorizeRoles('citizen', 'officer', 'admin', 'super_admin'), async (req, res, next) => {
   try {
     await markAllAsRead(req.user.id, req.user.organizationId);
     res.json({

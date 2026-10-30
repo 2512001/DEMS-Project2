@@ -14,7 +14,21 @@ const pendingUploadRequestSchema = new Schema({
         default: null,
         index: true
     },
-    
+    groupId: {
+        type: Schema.Types.ObjectId,
+        ref: 'Group',
+        default: null,
+        index: true
+    },
+    description: {
+        type: String,
+        default: ''
+    },
+    reason: {
+        type: String,
+        default: ''
+    },
+
     // Uploader information
     uploaderId: {
         type: Schema.Types.ObjectId,
@@ -25,7 +39,8 @@ const pendingUploadRequestSchema = new Schema({
     uploaderWallet: {
         type: String,
         required: true,
-        lowercase: true
+        lowercase: true,
+        index: true
     },
     organizationId: {
         type: Schema.Types.ObjectId,
@@ -33,7 +48,7 @@ const pendingUploadRequestSchema = new Schema({
         default: null,
         index: true
     },
-    
+
     // File information
     fileName: {
         type: String,
@@ -52,7 +67,7 @@ const pendingUploadRequestSchema = new Schema({
         required: true,
         index: true
     },
-    
+
     // Capture metadata
     captureMetadata: {
         deviceInfo: { type: String, required: true },
@@ -62,58 +77,63 @@ const pendingUploadRequestSchema = new Schema({
         },
         capturedAt: { type: Date, required: true }
     },
-    
+
     // Storage reference (quarantine)
     quarantineStorageReference: {
         type: String,
         required: true
     },
-    
-    // Workflow status
+
+    // Workflow status state machine
     workflowStatus: {
         type: String,
-        enum: ['pending_user_signature', 'pending_org_admin_approval', 'pending_super_admin_approval', 'pending_system_finalization', 'approved', 'rejected', 'finalized'],
-        default: 'pending_user_signature',
+        enum: [
+            'PENDING_REVIEW',
+            'REJECTED',
+            'APPROVED_PROCESSING',
+            'IPFS_STORED',
+            'BLOCKCHAIN_PENDING',
+            'FINALIZED',
+            'PROCESSING_FAILED',
+            'CLEANUP_PENDING',
+            'CLEANED',
+            // Backward-compatible statuses
+            'pending_user_signature',
+            'pending_org_admin_approval',
+            'pending_super_admin_approval',
+            'pending_system_finalization',
+            'approved',
+            'rejected',
+            'finalized'
+        ],
+        default: 'PENDING_REVIEW',
         index: true
     },
-    
-    // User signature (uploader authorization)
-    userSignature: {
-        signature: { type: String, default: null },
-        signedAt: { type: Date, default: null },
-        messageHash: { type: String, default: null },
-        walletAddress: { type: String, default: null } // For KEK derivation
+
+    // Per-file DEK envelope (encrypted at rest with server master key)
+    dekEnvelope: {
+        encryptedDEK: { type: String, default: null },
+        keyIv: { type: String, default: null },
+        keyAuthTag: { type: String, default: null }
     },
-    
-    // Organization Admin approval
+
+    // Organization Admin approval decision
     orgAdminApproval: {
         approvedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
-        signature: { type: String, default: null },
+        approvedAt: { type: Date, default: null },
         signedAt: { type: Date, default: null },
-        messageHash: { type: String, default: null },
         reason: { type: String, default: null },
-        walletAddress: { type: String, default: null } // For KEK derivation
+        note: { type: String, default: null },
+        signature: { type: String, default: null }
     },
-    
-    // Super Admin approval
+
+    // Super Admin monitoring or review (optional platform-level tracking)
     superAdminApproval: {
         approvedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
-        signature: { type: String, default: null },
-        signedAt: { type: Date, default: null },
-        messageHash: { type: String, default: null },
-        reason: { type: String, default: null },
-        walletAddress: { type: String, default: null } // For KEK derivation
+        approvedAt: { type: Date, default: null },
+        reason: { type: String, default: null }
     },
-    
-    // System finalization
-    systemFinalization: {
-        finalizedAt: { type: Date, default: null },
-        evidenceId: { type: Schema.Types.ObjectId, ref: 'Evidence', default: null },
-        ipfsCID: { type: String, default: null },
-        blockchainTxHash: { type: String, default: null },
-        error: { type: String, default: null }
-    },
-    
+
     // Rejection information
     rejection: {
         rejectedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
@@ -121,67 +141,60 @@ const pendingUploadRequestSchema = new Schema({
         reason: { type: String, default: null },
         stage: { type: String, default: null }
     },
-    
-    // Request version for signature replay protection
-    requestVersion: {
-        type: Number,
-        default: 1
+
+    // Finalization tracking
+    systemFinalization: {
+        finalizedAt: { type: Date, default: null },
+        evidenceId: { type: Schema.Types.ObjectId, ref: 'Evidence', default: null },
+        ipfsCID: { type: String, default: null },
+        blockchainTxHash: { type: String, default: null },
+        error: { type: String, default: null },
+        retryCount: { type: Number, default: 0 }
     },
-    
-    // Nonce for signature freshness
-    signatureNonce: {
+
+    // Temporary storage cleanup tracking
+    cleanupStatus: {
         type: String,
-        required: true,
-        default: () => require('crypto').randomBytes(16).toString('hex')
+        enum: ['NONE', 'CLEANUP_PENDING', 'CLEANED', 'FAILED'],
+        default: 'NONE',
+        index: true
     },
-    
-    // Expiry for approval window
+    cleanedAt: {
+        type: Date,
+        default: null
+    },
+
+    // Expiry
     expiresAt: {
         type: Date,
         required: true,
         default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
     },
-    
+
     // Optional AI analysis
-    aiAnalysis: { type: Schema.Types.Mixed, default: null },
-    
+    aiAnalysis: {
+        type: Schema.Types.Mixed,
+        default: null
+    },
+
     // Blockchain requested flag
     blockchainRequested: {
         type: Boolean,
         default: false
     },
-    
-    // Multi-party key management (Phase 2)
+
+    // Key management version
     keyVersion: {
         type: String,
-        default: null
-    },
-    encryptedDEKs: {
-        user: {
-            encryptedDEK: { type: Buffer, default: null },
-            iv: { type: String, default: null },
-            authTag: { type: String, default: null },
-            algorithm: { type: String, default: 'aes-256-gcm' }
-        },
-        org_admin: {
-            encryptedDEK: { type: Buffer, default: null },
-            iv: { type: String, default: null },
-            authTag: { type: String, default: null },
-            algorithm: { type: String, default: 'aes-256-gcm' }
-        },
-        super_admin: {
-            encryptedDEK: { type: Buffer, default: null },
-            iv: { type: String, default: null },
-            authTag: { type: String, default: null },
-            algorithm: { type: String, default: 'aes-256-gcm' }
-        }
+        default: 'v1'
     }
 }, { 
     timestamps: true,
     indexes: [
         { workflowStatus: 1, createdAt: -1 },
         { organizationId: 1, workflowStatus: 1 },
-        { uploaderId: 1, workflowStatus: 1 }
+        { uploaderId: 1, workflowStatus: 1 },
+        { cleanupStatus: 1 }
     ]
 });
 

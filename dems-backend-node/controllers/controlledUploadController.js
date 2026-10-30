@@ -1,17 +1,18 @@
 const {
     createPendingUploadRequest,
-    signPendingUploadRequest,
+    getPendingUploadPreview,
     approvePendingUploadRequest,
-    superAdminApprovePendingUploadRequest,
     rejectPendingUploadRequest,
     getPendingUploadRequests,
-    getPendingUploadRequestById
+    getPendingUploadRequestById,
+    retryFinalization
 } = require('../services/controlledUploadService');
-const { isSuperAdmin, isAdmin, httpError } = require('../services/accessControl');
-const { writeAuditLog } = require('../services/auditService');
+const { isSuperAdmin, isAdmin } = require('../services/accessControl');
+const { ensureAdminOrganization } = require('../services/organizationService');
+const { sanitizePendingUploadForClient } = require('../services/verificationStatusService');
 
 /**
- * Create a new pending upload request (controlled evidence workflow)
+ * Create a new pending upload request
  */
 const createPendingUpload = async (req, res, next) => {
     try {
@@ -26,9 +27,12 @@ const createPendingUpload = async (req, res, next) => {
             body: req.body
         });
 
+        const sanitizedPending = sanitizePendingUploadForClient(result.pendingRequest);
+
         return res.status(201).json({
             success: true,
-            ...result
+            ...result,
+            pendingRequest: sanitizedPending
         });
     } catch (err) {
         if (err.statusCode) {
@@ -39,27 +43,24 @@ const createPendingUpload = async (req, res, next) => {
 };
 
 /**
- * Sign a pending upload request (uploader authorization)
+ * Preview pending original image (strictly for authorized Organization Admin)
  */
-const signPendingUpload = async (req, res, next) => {
+const getPendingUploadPreviewController = async (req, res, next) => {
     try {
         const { requestId } = req.params;
-        const { signature } = req.body;
-
-        if (!signature) {
-            return res.status(400).json({ success: false, message: 'Signature is required.' });
-        }
-
-        const result = await signPendingUploadRequest({
+        const { fileBuffer, mimeType, fileName } = await getPendingUploadPreview({
             user: req.user,
-            requestId,
-            signature
+            requestId
         });
 
-        return res.status(200).json({
-            success: true,
-            ...result
-        });
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+
+        return res.send(fileBuffer);
     } catch (err) {
         if (err.statusCode) {
             return res.status(err.statusCode).json({ success: false, message: err.message });
@@ -69,27 +70,25 @@ const signPendingUpload = async (req, res, next) => {
 };
 
 /**
- * Approve a pending upload request (Organization Admin)
+ * Approve pending upload request (Organization Admin decision)
  */
 const approvePendingUpload = async (req, res, next) => {
     try {
         const { requestId } = req.params;
-        const { signature, reason } = req.body;
-
-        if (!signature) {
-            return res.status(400).json({ success: false, message: 'Signature is required.' });
-        }
+        const { reason } = req.body;
 
         const result = await approvePendingUploadRequest({
             user: req.user,
             requestId,
-            signature,
             reason
         });
 
+        const sanitizedPending = sanitizePendingUploadForClient(result.pendingRequest);
+
         return res.status(200).json({
             success: true,
-            ...result
+            ...result,
+            pendingRequest: sanitizedPending
         });
     } catch (err) {
         if (err.statusCode) {
@@ -100,57 +99,29 @@ const approvePendingUpload = async (req, res, next) => {
 };
 
 /**
- * Approve a pending upload request (Super Admin)
- */
-const superAdminApprovePendingUpload = async (req, res, next) => {
-    try {
-        const { requestId } = req.params;
-        const { signature, reason } = req.body;
-
-        if (!signature) {
-            return res.status(400).json({ success: false, message: 'Signature is required.' });
-        }
-
-        const result = await superAdminApprovePendingUploadRequest({
-            user: req.user,
-            requestId,
-            signature,
-            reason
-        });
-
-        return res.status(200).json({
-            success: true,
-            ...result
-        });
-    } catch (err) {
-        if (err.statusCode) {
-            return res.status(err.statusCode).json({ success: false, message: err.message });
-        }
-        next(err);
-    }
-};
-
-/**
- * Reject a pending upload request
+ * Reject pending upload request (Organization Admin decision)
  */
 const rejectPendingUpload = async (req, res, next) => {
     try {
         const { requestId } = req.params;
         const { reason } = req.body;
 
-        if (!reason) {
+        if (!reason || !String(reason).trim()) {
             return res.status(400).json({ success: false, message: 'Rejection reason is required.' });
         }
 
         const result = await rejectPendingUploadRequest({
             user: req.user,
             requestId,
-            reason
+            reason: String(reason).trim()
         });
+
+        const sanitizedPending = sanitizePendingUploadForClient(result.pendingRequest);
 
         return res.status(200).json({
             success: true,
-            ...result
+            ...result,
+            pendingRequest: sanitizedPending
         });
     } catch (err) {
         if (err.statusCode) {
@@ -161,33 +132,61 @@ const rejectPendingUpload = async (req, res, next) => {
 };
 
 /**
- * Get pending upload requests (for approval queues)
+ * Retry finalization for a failed permanent processing job
+ */
+const retryPendingFinalization = async (req, res, next) => {
+    try {
+        const { requestId } = req.params;
+        const result = await retryFinalization({
+            user: req.user,
+            requestId
+        });
+
+        return res.status(200).json(result);
+    } catch (err) {
+        if (err.statusCode) {
+            return res.status(err.statusCode).json({ success: false, message: err.message });
+        }
+        next(err);
+    }
+};
+
+/**
+ * List pending upload requests (filtered by role and permissions)
  */
 const listPendingUploads = async (req, res, next) => {
     try {
         const filters = {
             workflowStatus: req.query.status,
+            search: req.query.search,
             page: parseInt(req.query.page, 10) || 1,
             limit: Math.min(parseInt(req.query.limit, 10) || 20, 100)
         };
 
-        // Role-based filtering
         if (isSuperAdmin(req.user)) {
-            // Super Admin can see all pending uploads
-            // No organization filter
+            // Super Admin can monitor all organizations
+            if (req.query.organizationId) {
+                filters.organizationId = req.query.organizationId;
+            }
         } else if (isAdmin(req.user)) {
-            // Organization Admin can see pending uploads for their organization
+            // Organization Admin only sees their own organization's uploads
+            if (!req.user.organizationId && req.user.role === 'admin') {
+                await ensureAdminOrganization(req.user);
+            }
             filters.organizationId = req.user.organizationId;
         } else {
-            // Regular users can only see their own
+            // Regular citizens / officers only see their own submissions
             filters.uploaderId = req.user.id;
         }
 
         const result = await getPendingUploadRequests(filters);
 
+        const sanitizedRequests = (result.requests || []).map(sanitizePendingUploadForClient);
+
         return res.status(200).json({
             success: true,
-            ...result
+            requests: sanitizedRequests,
+            pagination: result.pagination
         });
     } catch (err) {
         if (err.statusCode) {
@@ -205,14 +204,11 @@ const getPendingUploadById = async (req, res, next) => {
         const { requestId } = req.params;
         const pendingRequest = await getPendingUploadRequestById(requestId, req.user);
 
-        // Return without sensitive fields
-        const publicRequest = pendingRequest.toObject();
-        delete publicRequest.quarantineStorageReference;
-        delete publicRequest.signatureNonce;
+        const sanitized = sanitizePendingUploadForClient(pendingRequest);
 
         return res.status(200).json({
             success: true,
-            data: publicRequest
+            data: sanitized
         });
     } catch (err) {
         if (err.statusCode) {
@@ -224,10 +220,10 @@ const getPendingUploadById = async (req, res, next) => {
 
 module.exports = {
     createPendingUpload,
-    signPendingUpload,
+    getPendingUploadPreviewController,
     approvePendingUpload,
-    superAdminApprovePendingUpload,
     rejectPendingUpload,
+    retryPendingFinalization,
     listPendingUploads,
     getPendingUploadById
 };

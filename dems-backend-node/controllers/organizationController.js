@@ -2,6 +2,7 @@ const Organization = require('../model/organizationModel');
 const User = require('../model/userModel');
 const Evidence = require('../model/evidenceModel');
 const QuarantineEvidence = require('../model/quarantineEvidenceModel');
+const PendingUploadRequest = require('../model/pendingUploadRequestModel');
 const { generateOrganizationCode, ensureAdminOrganization } = require('../services/organizationService');
 const { requireOrgAdmin, isAdmin, isSuperAdmin } = require('../services/accessControl');
 const { parseBoolean } = require('../services/evidencePipelineService');
@@ -231,10 +232,11 @@ const getOrganizationOverview = async (req, res, next) => {
         requireOrgAdmin(req.user);
         const orgId = req.user.organizationId;
 
-        const [employees, totalEvidence, pendingReview, quarantined, blockchain, pendingApplications] = await Promise.all([
+        const [employees, totalEvidence, quarantineReview, pendingUploadsCount, quarantined, blockchain, pendingApplications] = await Promise.all([
             User.countDocuments({ organizationId: orgId, role: 'officer', membershipStatus: 'active' }),
             Evidence.countDocuments({ organizationId: orgId }),
             QuarantineEvidence.countDocuments({ organizationId: orgId, reviewStatus: 'pending_review' }),
+            PendingUploadRequest.countDocuments({ organizationId: orgId, workflowStatus: { $in: ['PENDING_REVIEW', 'pending_org_admin_approval'] } }),
             QuarantineEvidence.countDocuments({ organizationId: orgId }),
             Evidence.countDocuments({ organizationId: orgId, blockchainStatus: 'confirmed' }),
             User.countDocuments({ organizationId: orgId, membershipStatus: 'pending_approval' })
@@ -245,7 +247,8 @@ const getOrganizationOverview = async (req, res, next) => {
             data: {
                 employees,
                 totalEvidence,
-                pendingReview,
+                pendingReview: quarantineReview + pendingUploadsCount,
+                pendingUploads: pendingUploadsCount,
                 quarantined,
                 blockchain,
                 pendingApplications
@@ -413,7 +416,20 @@ const updateOrganizationStatus = async (req, res, next) => {
     }
 };
 
+const getActiveOrganizations = async (req, res, next) => {
+    try {
+        const organizations = await Organization.find({ status: 'active' })
+            .select('_id name organizationCode organizationType')
+            .sort({ name: 1 })
+            .limit(100);
+        return res.status(200).json({ success: true, count: organizations.length, data: organizations });
+    } catch (err) {
+        next(err);
+    }
+};
+
 module.exports = {
+    getActiveOrganizations,
     listOrganizations,
     createOrganization,
     assignOrganizationAdmin,

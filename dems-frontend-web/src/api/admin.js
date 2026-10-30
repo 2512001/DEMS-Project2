@@ -234,3 +234,8 @@ export async function dryRunDeletion(payload) {
   const { data } = await apiClient.post('/retention/dry-run', payload);
   return data;
 }
+
+export async function getActiveOrganizations() {
+  const { data } = await apiClient.get('/organization/active');
+  return data.data;
+}

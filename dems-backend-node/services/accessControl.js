@@ -48,6 +48,24 @@ async function canAccessEvidence(user, evidence) {
     
     if (isEvidenceOwner(user, evidence)) return true;
     if (isAdmin(user) && sameOrganization(user, evidence.organizationId)) return true;
+
+    // Allow members of the same organization to view metadata
+    if (sameOrganization(user, evidence.organizationId)) return true;
+
+    // Check if user has an approved, active temporary permission
+    const ViewAccessRequest = require('../model/viewAccessRequestModel');
+    const hasActiveGrant = await ViewAccessRequest.exists({
+        requesterId: user.id,
+        status: 'approved',
+        'permission.status': 'active',
+        'permission.expiresAt': { $gt: new Date() },
+        $or: [
+            { targetType: 'evidence', targetId: evidence._id.toString() },
+            ...(evidence.caseId ? [{ targetType: 'case', targetId: evidence.caseId }] : []),
+            ...(evidence.groupId ? [{ targetType: 'group', targetId: evidence.groupId.toString() }] : [])
+        ]
+    });
+    if (hasActiveGrant) return true;
     
     if (sameOrganization(user, evidence.organizationId) && evidence.groupId) {
         const Group = require('../model/groupModel');

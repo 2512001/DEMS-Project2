@@ -137,7 +137,7 @@ router.get('/platform', protect, authorizeRoles('super_admin'), async (req, res,
 });
 
 // Get organization-specific analytics for Admin
-router.get('/organization', protect, async (req, res, next) => {
+router.get('/organization', protect, authorizeRoles('admin'), async (req, res, next) => {
     try {
         const organizationId = req.user.organizationId;
         if (!organizationId) {
@@ -215,7 +215,7 @@ router.get('/organization', protect, async (req, res, next) => {
 });
 
 // Get officer-specific analytics
-router.get('/officer', protect, async (req, res, next) => {
+router.get('/officer', protect, authorizeRoles('officer'), async (req, res, next) => {
     try {
         const userId = req.user.id;
 
@@ -257,7 +257,7 @@ router.get('/officer', protect, async (req, res, next) => {
 });
 
 // Get citizen-specific analytics
-router.get('/citizen', protect, async (req, res, next) => {
+router.get('/citizen', protect, authorizeRoles('citizen'), async (req, res, next) => {
     try {
         const userId = req.user.id;
 

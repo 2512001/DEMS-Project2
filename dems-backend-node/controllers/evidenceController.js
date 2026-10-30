@@ -10,6 +10,68 @@ const { canAccessEvidence, isAdmin, isEmployee, isEvidenceOwner, httpError } = r
 const { writeAuditLog } = require('../services/auditService');
 const { getOrganizationPolicy } = require('../services/organizationService');
 const { validateEvidenceImageType } = require('../services/imageValidationService');
+const { checkUserActivePermission, sweepExpiredPermissions } = require('../services/viewAccessService');
+const ViewAccessRequest = require('../model/viewAccessRequestModel');
+
+const enrichEvidenceWithAccess = async (evidenceList, user) => {
+    if (!evidenceList || !evidenceList.length || !user) return [];
+    try {
+        await sweepExpiredPermissions();
+    } catch (e) {
+        // Proceed if sweep encounters non-fatal issue
+    }
+    return Promise.all(
+        evidenceList.map(async (ev) => {
+            const permCheck = await checkUserActivePermission({ user, evidence: ev });
+            const targetConditions = [
+                { targetType: 'evidence', targetId: ev._id.toString() },
+                { evidenceId: ev._id }
+            ];
+            if (ev.caseId) {
+                targetConditions.push({ targetType: 'case', targetId: String(ev.caseId).trim() });
+                targetConditions.push({ caseId: String(ev.caseId).trim() });
+            }
+            if (ev.groupId) {
+                const gId = (ev.groupId._id || ev.groupId).toString();
+                targetConditions.push({ targetType: 'group', targetId: gId });
+                targetConditions.push({ groupId: ev.groupId._id || ev.groupId });
+            }
+
+            const latestRequest = await ViewAccessRequest.findOne({
+                requesterId: user.id,
+                $or: targetConditions
+            }).sort({ createdAt: -1 });
+
+            const evObj = ev.toObject ? ev.toObject() : { ...ev };
+            delete evObj.encryption;
+            delete evObj.encryptedDEKs;
+
+            return {
+                ...evObj,
+                userAccessStatus: permCheck.hasPermission ? 'approved' : (latestRequest?.status || 'access_required'),
+                latestRequest: latestRequest ? {
+                    requestId: latestRequest.requestId,
+                    status: latestRequest.status,
+                    requestedDuration: latestRequest.requestedDuration,
+                    reason: latestRequest.reason,
+                    createdAt: latestRequest.createdAt,
+                    rejectionReason: latestRequest.rejectionReason,
+                    rejectedAt: latestRequest.rejectedAt,
+                    revocationReason: latestRequest.permission?.revocationReason,
+                    revokedAt: latestRequest.permission?.revokedAt,
+                    expiresAt: latestRequest.permission?.expiresAt
+                } : null,
+                activePermission: permCheck.hasPermission ? {
+                    isOwner: permCheck.isOwner,
+                    expiresAt: permCheck.expiresAt,
+                    remainingMs: permCheck.remainingMs,
+                    scope: permCheck.scope,
+                    requestId: permCheck.requestId
+                } : null
+            };
+        })
+    );
+};
 
 const getFileBuffer = (file) => {
     if (file.buffer) return file.buffer;
@@ -114,7 +176,7 @@ const getMyFiles = async (req, res, next) => {
         return res.status(200).json({
             success: true,
             count: evidence.length,
-            data: evidence,
+            data: await enrichEvidenceWithAccess(evidence, req.user),
             quarantine: quarantine.map((record) => ({
                 ...record.toObject(),
                 isQuarantine: true,
@@ -198,7 +260,7 @@ const getOrganizationEvidence = async (req, res, next) => {
         return res.status(200).json({
             success: true,
             count: evidence.length,
-            data: evidence,
+            data: await enrichEvidenceWithAccess(evidence, req.user),
             pagination: {
                 page,
                 limit,
@@ -235,7 +297,22 @@ const getEvidenceById = async (req, res, next) => {
             ipfsCID: evidence.ipfsCID
         });
 
-        const canReviewImage = isAdmin(req.user);
+        // Check view access permission for protected evidence content
+        const permCheck = await checkUserActivePermission({
+            user: req.user,
+            evidence
+        });
+
+        const isDownloadRoute = req.originalUrl?.includes('/download/') || req.path?.includes('/download/');
+        if (isDownloadRoute && !permCheck.hasPermission) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access Denied: You must have an approved, active view access permission to download this protected evidence.',
+                viewAccessRequired: true
+            });
+        }
+
+        const canReviewImage = permCheck.hasPermission;
         let fileContent = null;
         if (canReviewImage && evidence.ipfsCID && evidence.encryption?.iv && evidence.encryption?.authTag) {
             try {
@@ -243,7 +320,8 @@ const getEvidenceById = async (req, res, next) => {
                 const originalBuffer = decryptFile(encryptedBuffer, evidence.encryption);
                 fileContent = originalBuffer.toString('base64');
             } catch (err) {
-                if (err.statusCode !== 422) {
+                console.warn('[EVIDENCE] Could not fetch/decrypt IPFS blob:', err.message);
+                if (false) {
                     throw err;
                 }
             }
@@ -268,11 +346,43 @@ const getEvidenceById = async (req, res, next) => {
             payloadEvidenceId: payload?.evidenceId
         });
 
+        const ViewAccessRequest = require('../model/viewAccessRequestModel');
+        const latestRequest = await ViewAccessRequest.findOne({
+            requesterId: req.user.id,
+            $or: [
+                { targetType: 'evidence', targetId: evidence._id.toString() },
+                ...(evidence.caseId ? [{ targetType: 'case', targetId: evidence.caseId }] : []),
+                ...(evidence.groupId ? [{ targetType: 'group', targetId: evidence.groupId.toString() }] : [])
+            ]
+        }).sort({ createdAt: -1 });
+
         return res.status(200).json({
             success: true,
             data: {
                 ...evidencePayload,
-                ...(canReviewImage ? { fileContent } : {}),
+                fileContent,
+                canViewImage: Boolean(canReviewImage && fileContent),
+                viewAccessRequired: !canReviewImage,
+                userAccessStatus: permCheck.hasPermission ? 'approved' : (latestRequest?.status || 'access_required'),
+                latestRequest: latestRequest ? {
+                    requestId: latestRequest.requestId,
+                    status: latestRequest.status,
+                    requestedDuration: latestRequest.requestedDuration,
+                    reason: latestRequest.reason,
+                    createdAt: latestRequest.createdAt,
+                    rejectionReason: latestRequest.rejectionReason,
+                    rejectedAt: latestRequest.rejectedAt,
+                    revocationReason: latestRequest.permission?.revocationReason,
+                    revokedAt: latestRequest.permission?.revokedAt,
+                    expiresAt: latestRequest.permission?.expiresAt
+                } : null,
+                activePermission: permCheck.hasPermission ? {
+                    isOwner: permCheck.isOwner,
+                    expiresAt: permCheck.expiresAt,
+                    remainingMs: permCheck.remainingMs,
+                    scope: permCheck.scope,
+                    requestId: permCheck.requestId
+                } : null,
                 blockchainPayload: (evidence.blockchainStatus === 'pending' || evidence.blockchainStatus === 'failed') && evidence.ipfsCID
                     ? payload
                     : null
@@ -611,7 +721,7 @@ const getPlatformEvidence = async (req, res, next) => {
         return res.status(200).json({
             success: true,
             count: evidence.length,
-            data: evidence,
+            data: await enrichEvidenceWithAccess(evidence, req.user),
             pagination: {
                 page,
                 limit,

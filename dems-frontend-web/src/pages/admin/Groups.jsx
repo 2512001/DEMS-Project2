@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Users, Plus, Trash2, UserMinus, Search, X, MoreVertical } from 'lucide-react';
+import { Users, Plus, Trash2, UserMinus, Search, X, MoreVertical, Eye, Shield } from 'lucide-react';
 import { createGroup, getOrganizationGroups, addMemberToGroup, removeMemberFromGroup, deleteGroup } from '../../api/groups.js';
 import { getUsers } from '../../api/admin.js';
 import PageHeader from '../../components/ui/PageHeader.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
 import { useToast } from '../../components/ui/Toast.jsx';
 import Modal from '../../components/ui/Modal.jsx';
+import RequestViewAccessModal from '../../components/viewAccess/RequestViewAccessModal.jsx';
 import { formatDate, formatRelativeTime } from '../../utils/format.js';
 
 export default function Groups() {
@@ -18,6 +19,8 @@ export default function Groups() {
   const [showMemberModal, setShowMemberModal] = useState(false);
   const [deleteConfirmGroup, setDeleteConfirmGroup] = useState(null);
   const [removeConfirmMember, setRemoveConfirmMember] = useState(null);
+  const [showViewRequestModal, setShowViewRequestModal] = useState(false);
+  const [selectedViewGroup, setSelectedViewGroup] = useState(null);
 
   const [newGroup, setNewGroup] = useState({ name: '', description: '' });
 
@@ -244,6 +247,18 @@ export default function Groups() {
                       type="button"
                       className="btn-secondary btn-sm"
                       onClick={() => {
+                        setSelectedViewGroup(group);
+                        setShowViewRequestModal(true);
+                      }}
+                      title="Request group-level temporary view access"
+                    >
+                      <Eye size={13} />
+                      Request Access
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => {
                         setSelectedGroup(group);
                         setShowMemberModal(true);
                       }}
@@ -406,6 +421,14 @@ export default function Groups() {
             </button>
           </>
         }
+      />
+      <RequestViewAccessModal
+        open={showViewRequestModal}
+        onClose={() => setShowViewRequestModal(false)}
+        initialTargetType="group"
+        initialTargetId={selectedViewGroup?._id || ""}
+        initialTargetName={selectedViewGroup?.name || ""}
+        lockedTarget={Boolean(selectedViewGroup)}
       />
     </div>
   );

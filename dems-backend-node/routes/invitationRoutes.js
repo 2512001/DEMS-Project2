@@ -23,8 +23,8 @@ router.get('/token/:token', getInvitationByToken);
 // Protected invitation management
 router.post('/admin/create', protect, authorizeRoles('super_admin'), createAdminInvitation);
 router.post('/employee/create', protect, authorizeRoles('admin'), createEmployeeInvitation);
-router.get('/pending/:organizationId', protect, getPendingInvitations);
-router.delete('/:invitationId/revoke', protect, revokeInvitation);
+router.get('/pending/:organizationId', protect, authorizeRoles('admin'), getPendingInvitations);
+router.delete('/:invitationId/revoke', protect, authorizeRoles('admin', 'super_admin'), revokeInvitation);
 
 // Accept invitation routes (require auth)
 router.post('/admin/:token/accept', protect, acceptAdminInvitation);

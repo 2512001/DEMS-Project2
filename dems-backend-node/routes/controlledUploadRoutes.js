@@ -1,10 +1,10 @@
 const express = require('express');
 const {
     createPendingUpload,
-    signPendingUpload,
+    getPendingUploadPreviewController,
     approvePendingUpload,
-    superAdminApprovePendingUpload,
     rejectPendingUpload,
+    retryPendingFinalization,
     listPendingUploads,
     getPendingUploadById
 } = require('../controllers/controlledUploadController');
@@ -14,25 +14,25 @@ const { authorizeRoles } = require('../middleware/roleMiddleware');
 
 const router = express.Router();
 
-// Create pending upload request (all authenticated users)
+// Create pending upload request (authenticated users: citizen, officer, admin)
 router.post('/pending', protect, uploadMemory.single('evidence'), createPendingUpload);
 
-// Sign pending upload (uploader authorization)
-router.post('/pending/:requestId/sign', protect, signPendingUpload);
+// List pending uploads (scoped by role in controller: super_admin monitors platform, admin views org, officer/citizen view self)
+router.get('/pending', protect, authorizeRoles('super_admin', 'admin', 'officer', 'citizen'), listPendingUploads);
 
-// Approve pending upload (Organization Admin)
+// Preview pending image (strictly Organization Admin of that organization)
+router.get('/pending/:requestId/preview', protect, authorizeRoles('admin'), getPendingUploadPreviewController);
+
+// Approve pending upload (Organization Admin only)
 router.post('/pending/:requestId/approve', protect, authorizeRoles('admin'), approvePendingUpload);
 
-// Approve pending upload (Super Admin)
-router.post('/pending/:requestId/super-approve', protect, authorizeRoles('super_admin'), superAdminApprovePendingUpload);
+// Reject pending upload (Organization Admin only)
+router.post('/pending/:requestId/reject', protect, authorizeRoles('admin'), rejectPendingUpload);
 
-// Reject pending upload (Admin or Super Admin)
-router.post('/pending/:requestId/reject', protect, authorizeRoles('admin', 'super_admin'), rejectPendingUpload);
+// Retry failed finalization (Organization Admin only)
+router.post('/pending/:requestId/retry-finalization', protect, authorizeRoles('admin'), retryPendingFinalization);
 
-// List pending uploads (role-based access)
-router.get('/pending', protect, listPendingUploads);
-
-// Get pending upload by ID
+// Get single pending upload request by ID
 router.get('/pending/:requestId', protect, getPendingUploadById);
 
 module.exports = router;

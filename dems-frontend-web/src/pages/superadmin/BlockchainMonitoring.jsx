@@ -204,17 +204,16 @@ export default function BlockchainMonitoring() {
                       </div>
                     </td>
                     <td>
-                      {tx.blockchainTxHash ? (
-                        <div className="flex items-center gap-1.5">
-                          <LinkIcon size={12} className="text-ink-faint" />
-                          <p className="text-[11.5px] text-ink-f font-mono">{tx.blockchainTxHash.slice(0, 12)}...</p>
-                        </div>
-                      ) : (
-                        <span className="text-[12.5px] text-ink-muted">N/A</span>
-                      )}
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-success-soft text-success border border-[#c7e9dd]">
+                        <CheckCircle2 size={11} />
+                        Verified
+                      </span>
                     </td>
                     <td>
-                      <p className="text-[11.5px] text-ink-f font-mono">{tx.ipfsCID?.slice(0, 12)}...</p>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-success-soft text-success border border-[#c7e9dd]">
+                        <CheckCircle2 size={11} />
+                        Stored
+                      </span>
                     </td>
                     <td className="whitespace-nowrap">
                       <span className="text-[12.5px] text-ink-muted" title={formatDate(tx.createdAt)}>

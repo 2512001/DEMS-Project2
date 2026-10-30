@@ -14,6 +14,17 @@ const IMAGE_MAGIC_NUMBERS = {
 };
 
 /**
+ * Known rejected signatures to give explicit error messages
+ */
+const REJECTED_SIGNATURES = [
+    { type: 'PDF', buffer: Buffer.from('%PDF'), reason: 'PDF documents are not supported. Only JPEG and PNG images are allowed.' },
+    { type: 'GIF', buffer: Buffer.from('GIF8'), reason: 'GIF images are not supported. Only JPEG and PNG images are allowed.' },
+    { type: 'WEBP', buffer: Buffer.from('RIFF'), reason: 'WebP images are not supported. Only JPEG and PNG images are allowed.' },
+    { type: 'MP4/Video', buffer: Buffer.from([0x00, 0x00, 0x00]), check: (buf) => buf.length > 8 && buf.subarray(4, 8).toString('ascii') === 'ftyp', reason: 'Video files are not supported. Only JPEG and PNG images are allowed.' },
+    { type: 'Audio', buffer: Buffer.from('ID3'), reason: 'Audio files are not supported. Only JPEG and PNG images are allowed.' }
+];
+
+/**
  * Maximum file size for images (20MB)
  */
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -23,9 +34,6 @@ const MAX_FILE_SIZE = 20 * 1024 * 1024;
  */
 const MAX_IMAGE_DIMENSION = 10000;
 
-/**
- * Check if buffer starts with any of the magic numbers
- */
 function checkMagicNumber(buffer, magicNumbers) {
     return magicNumbers.some(magic => {
         if (buffer.length < magic.length) return false;
@@ -33,9 +41,54 @@ function checkMagicNumber(buffer, magicNumbers) {
     });
 }
 
+function checkImageIntegrity(fileBuffer, mimeType) {
+    if (mimeType === 'image/jpeg') {
+        // JPEG must be at least 4 bytes and end with EOI marker (FF D9)
+        if (fileBuffer.length < 4) {
+            return { valid: false, reason: 'Corrupted image: file too small to be a valid JPEG.' };
+        }
+        // Check for EOI marker in last 4 bytes (often trailing whitespace/zeros)
+        const tail = fileBuffer.subarray(Math.max(0, fileBuffer.length - 128));
+        let foundEoi = false;
+        for (let i = 0; i < tail.length - 1; i++) {
+            if (tail[i] === 0xFF && tail[i + 1] === 0xD9) {
+                foundEoi = true;
+                break;
+            }
+        }
+        if (!foundEoi) {
+            return { valid: false, reason: 'Corrupted image: JPEG file is truncated or missing end-of-image marker.' };
+        }
+    } else if (mimeType === 'image/png') {
+        // PNG must have at least 8 bytes signature + 12 bytes IEND chunk = 20 bytes
+        if (fileBuffer.length < 24) {
+            return { valid: false, reason: 'Corrupted image: file too small to be a valid PNG.' };
+        }
+        // Must contain IEND chunk near the end
+        const tail = fileBuffer.subarray(Math.max(0, fileBuffer.length - 64));
+        if (!tail.includes(Buffer.from('IEND'))) {
+            return { valid: false, reason: 'Corrupted image: PNG file is truncated or missing IEND marker.' };
+        }
+    }
+    return { valid: true };
+}
+
 function validateEvidenceImageType(fileBuffer, declaredMimeType, fileName) {
     if (!fileBuffer || fileBuffer.length === 0) {
         return { valid: false, reason: 'File is empty.' };
+    }
+
+    if (fileBuffer.length > MAX_FILE_SIZE) {
+        return { valid: false, reason: `File size exceeds the 20MB limit (size: ${(fileBuffer.length / (1024 * 1024)).toFixed(2)}MB).` };
+    }
+
+    // Check against known forbidden signatures
+    for (const sig of REJECTED_SIGNATURES) {
+        if (sig.check) {
+            if (sig.check(fileBuffer)) return { valid: false, reason: sig.reason };
+        } else if (fileBuffer.length >= sig.buffer.length && fileBuffer.subarray(0, sig.buffer.length).equals(sig.buffer)) {
+            return { valid: false, reason: sig.reason };
+        }
     }
 
     const extension = path.extname(String(fileName || '')).toLowerCase();
@@ -46,71 +99,34 @@ function validateEvidenceImageType(fileBuffer, declaredMimeType, fileName) {
             ? 'image/png'
             : null;
 
-    if (!expectedMimeType || mimeType !== expectedMimeType) {
-        return { valid: false, reason: 'Only matching JPEG/JPG and PNG image files are allowed.' };
+    if (!expectedMimeType) {
+        return { valid: false, reason: 'Unsupported file extension. Only .jpg, .jpeg, and .png files are accepted.' };
+    }
+
+    if (mimeType && mimeType !== expectedMimeType) {
+        return { valid: false, reason: `MIME type mismatch: declared ${declaredMimeType} but expected ${expectedMimeType} based on extension.` };
     }
 
     if (!checkMagicNumber(fileBuffer, IMAGE_MAGIC_NUMBERS[expectedMimeType])) {
-        return { valid: false, reason: 'The file contents do not match the declared JPEG or PNG image type.' };
+        return { valid: false, reason: 'The file contents do not match actual JPEG or PNG byte signatures. Renamed files or non-images are strictly rejected.' };
+    }
+
+    const integrity = checkImageIntegrity(fileBuffer, expectedMimeType);
+    if (!integrity.valid) {
+        return integrity;
     }
 
     return { valid: true, mimeType: expectedMimeType };
 }
 
-/**
- * Validate image file by checking magic numbers
- * @param {Buffer} fileBuffer - The file buffer
- * @param {string} declaredMimeType - The MIME type declared by the client
- * @returns {Object} { valid: boolean, mimeType?: string, reason?: string }
- */
-function validateImageByMagicNumber(fileBuffer, declaredMimeType) {
-    if (!fileBuffer || fileBuffer.length === 0) {
-        return { valid: false, reason: 'File is empty' };
-    }
-
-    // Check file size
-    if (fileBuffer.length > MAX_FILE_SIZE) {
-        return { valid: false, reason: `File size exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit` };
-    }
-
-    const normalizedMimeType = declaredMimeType === 'image/jpg' ? 'image/jpeg' : declaredMimeType;
-
-    // Check each supported image type
-    for (const [mimeType, magicNumbers] of Object.entries(IMAGE_MAGIC_NUMBERS)) {
-        if (checkMagicNumber(fileBuffer, magicNumbers)) {
-            // Magic number matches this type
-            if (normalizedMimeType && normalizedMimeType !== mimeType) {
-                return { 
-                    valid: false, 
-                    reason: `Declared MIME type (${declaredMimeType}) does not match actual file type (${mimeType})` 
-                };
-            }
-            return { valid: true, mimeType };
-        }
-    }
-
-    // No magic number match - unsupported format
-    return { valid: false, reason: 'Unsupported file format. Only JPEG and PNG images are allowed.' };
-}
-
-/**
- * Extract image dimensions from buffer
- * Currently basic implementation - can be enhanced with sharp or jimp
- * @param {Buffer} fileBuffer - The file buffer
- * @param {string} mimeType - The validated MIME type
- * @returns {Object} { width: number, height: number } or null if unable to determine
- */
 function getImageDimensions(fileBuffer, mimeType) {
-    // Basic JPEG dimension extraction
     if (mimeType === 'image/jpeg') {
         try {
-            // JPEG dimensions are stored after SOI marker (FF D8) and before first SOS marker
             let offset = 2;
             while (offset < fileBuffer.length) {
                 if (fileBuffer[offset] !== 0xFF) break;
                 const marker = fileBuffer[offset + 1];
                 if (marker === 0xC0 || marker === 0xC1 || marker === 0xC2) {
-                    // SOF0, SOF1, SOF2 markers contain dimensions
                     const height = (fileBuffer[offset + 5] << 8) | fileBuffer[offset + 6];
                     const width = (fileBuffer[offset + 7] << 8) | fileBuffer[offset + 8];
                     return { width, height };
@@ -123,10 +139,8 @@ function getImageDimensions(fileBuffer, mimeType) {
         }
     }
 
-    // Basic PNG dimension extraction
     if (mimeType === 'image/png') {
         try {
-            // PNG dimensions are in IHDR chunk (after 8-byte signature)
             if (fileBuffer.length >= 24) {
                 const width = (fileBuffer[16] << 24) | (fileBuffer[17] << 16) | (fileBuffer[18] << 8) | fileBuffer[19];
                 const height = (fileBuffer[20] << 24) | (fileBuffer[21] << 16) | (fileBuffer[22] << 8) | fileBuffer[23];
@@ -140,64 +154,44 @@ function getImageDimensions(fileBuffer, mimeType) {
     return null;
 }
 
-/**
- * Validate image dimensions
- * @param {Object} dimensions - { width, height }
- * @returns {Object} { valid: boolean, reason?: string }
- */
 function validateImageDimensions(dimensions) {
     if (!dimensions || !dimensions.width || !dimensions.height) {
-        // Unable to determine dimensions - allow but log warning
-        console.warn('[IMAGE VALIDATION] Unable to determine image dimensions');
         return { valid: true };
     }
 
     if (dimensions.width > MAX_IMAGE_DIMENSION || dimensions.height > MAX_IMAGE_DIMENSION) {
         return { 
             valid: false, 
-            reason: `Image dimensions exceed ${MAX_IMAGE_DIMENSION}x${MAX_IMAGE_DIMENSION} limit` 
+            reason: `Image dimensions (${dimensions.width}x${dimensions.height}) exceed maximum allowed ${MAX_IMAGE_DIMENSION}x${MAX_IMAGE_DIMENSION}.` 
         };
     }
 
     if (dimensions.width < 1 || dimensions.height < 1) {
-        return { valid: false, reason: 'Invalid image dimensions' };
+        return { valid: false, reason: 'Invalid image dimensions.' };
     }
 
     return { valid: true };
 }
 
-/**
- * Complete image validation
- * @param {Buffer} fileBuffer - The file buffer
- * @param {string} declaredMimeType - The MIME type declared by client
- * @returns {Object} { valid: boolean, mimeType?: string, dimensions?: object, reason?: string }
- */
-function validateImageFile(fileBuffer, declaredMimeType) {
-    // Validate by magic number
-    const magicValidation = validateImageByMagicNumber(fileBuffer, declaredMimeType);
-    if (!magicValidation.valid) {
-        return magicValidation;
+function validateImageFile(fileBuffer, declaredMimeType, fileName) {
+    const typeResult = validateEvidenceImageType(fileBuffer, declaredMimeType, fileName);
+    if (!typeResult.valid) {
+        return typeResult;
     }
 
-    // Extract and validate dimensions
-    const dimensions = getImageDimensions(fileBuffer, magicValidation.mimeType);
+    const dimensions = getImageDimensions(fileBuffer, typeResult.mimeType);
     const dimensionValidation = validateImageDimensions(dimensions);
     if (!dimensionValidation.valid) {
-        return { ...dimensionValidation, mimeType: magicValidation.mimeType };
+        return { ...dimensionValidation, mimeType: typeResult.mimeType };
     }
 
     return {
         valid: true,
-        mimeType: magicValidation.mimeType,
+        mimeType: typeResult.mimeType,
         dimensions
     };
 }
 
-/**
- * Check if MIME type is supported for controlled evidence workflow
- * @param {string} mimeType - The MIME type to check
- * @returns {boolean}
- */
 function isSupportedImageMimeType(mimeType) {
     return Object.keys(IMAGE_MAGIC_NUMBERS).includes(mimeType);
 }

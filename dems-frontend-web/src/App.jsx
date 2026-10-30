@@ -37,6 +37,9 @@ import SuperAdminPendingUploads from './pages/superadmin/PendingUploads.jsx';
 import AdminInvitation from './pages/invitation/AdminInvitation.jsx';
 import EmployeeInvitation from './pages/invitation/EmployeeInvitation.jsx';
 import PendingUploads from './pages/admin/PendingUploads.jsx';
+import UploadRequestDetails from './pages/admin/UploadRequestDetails.jsx';
+import AdminViewRequests from './pages/admin/AdminViewRequests.jsx';
+import SuperAdminViewRequests from './pages/superadmin/SuperAdminViewRequests.jsx';
 
 export default function App() {
   return (
@@ -54,7 +57,7 @@ export default function App() {
         <Route path="/auth/email-verification" element={<EmailVerificationSetup />} />
       </Route>
 
-      <Route element={<RequireAuth roles={['citizen', 'officer', 'admin']} />}>
+      <Route element={<RequireAuth roles={['citizen']} />}>
         <Route element={<AppLayout section="citizen" />}>
           <Route path="/citizen" element={<CitizenDashboard />} />
           <Route path="/citizen/dashboard" element={<CitizenDashboard />} />
@@ -65,7 +68,7 @@ export default function App() {
         </Route>
       </Route>
 
-      <Route element={<RequireAuth roles={['officer', 'admin']} />}>
+      <Route element={<RequireAuth roles={['officer']} />}>
         <Route element={<AppLayout section="officer" />}>
           <Route path="/officer" element={<OfficerDashboard />} />
           <Route path="/officer/dashboard" element={<OfficerDashboard />} />
@@ -77,7 +80,7 @@ export default function App() {
         </Route>
       </Route>
 
-      <Route element={<RequireAuth roles={['admin', 'super_admin']} />}>
+      <Route element={<RequireAuth roles={['admin']} />}>
         <Route element={<AppLayout section="admin" />}>
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
@@ -87,7 +90,11 @@ export default function App() {
           <Route path="/admin/evidence" element={<OrgEvidence />} />
           <Route path="/admin/evidence/:evidenceId" element={<EvidenceDetails />} />
           <Route path="/admin/quarantine" element={<QuarantineReview />} />
+          <Route path="/admin/view-requests" element={<AdminViewRequests />} />
+          <Route path="/admin/upload-requests" element={<PendingUploads />} />
+          <Route path="/admin/upload-requests/:requestId" element={<UploadRequestDetails />} />
           <Route path="/admin/pending-uploads" element={<PendingUploads />} />
+          <Route path="/admin/pending-uploads/:requestId" element={<UploadRequestDetails />} />
           <Route path="/admin/modifications" element={<AdminModifications />} />
           <Route path="/admin/organization" element={<OrganizationSettings />} />
           <Route path="/admin/audit-logs" element={<AuditLogs />} />
@@ -104,7 +111,11 @@ export default function App() {
           <Route path="/superadmin/blockchain" element={<BlockchainMonitoring />} />
           <Route path="/superadmin/storage" element={<StorageMonitoring />} />
           <Route path="/superadmin/retention" element={<RetentionManagement />} />
+          <Route path="/superadmin/upload-requests" element={<SuperAdminPendingUploads />} />
+          <Route path="/superadmin/view-requests" element={<SuperAdminViewRequests />} />
+          <Route path="/superadmin/upload-requests/:requestId" element={<UploadRequestDetails />} />
           <Route path="/superadmin/pending-uploads" element={<SuperAdminPendingUploads />} />
+          <Route path="/superadmin/pending-uploads/:requestId" element={<UploadRequestDetails />} />
         </Route>
       </Route>
 

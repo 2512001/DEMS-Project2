@@ -7,18 +7,8 @@ export async function createPendingUpload(formData) {
   return data;
 }
 
-export async function signPendingUpload(requestId, signature) {
-  const { data } = await apiClient.post(`/controlled-upload/pending/${requestId}/sign`, { signature });
-  return data;
-}
-
-export async function approvePendingUpload(requestId, signature, reason) {
-  const { data } = await apiClient.post(`/controlled-upload/pending/${requestId}/approve`, { signature, reason });
-  return data;
-}
-
-export async function superAdminApprovePendingUpload(requestId, signature, reason) {
-  const { data } = await apiClient.post(`/controlled-upload/pending/${requestId}/super-approve`, { signature, reason });
+export async function approvePendingUpload(requestId, reason) {
+  const { data } = await apiClient.post(`/controlled-upload/pending/${requestId}/approve`, { reason });
   return data;
 }
 
@@ -27,12 +17,18 @@ export async function rejectPendingUpload(requestId, reason) {
   return data;
 }
 
+export async function retryPendingFinalization(requestId) {
+  const { data } = await apiClient.post(`/controlled-upload/pending/${requestId}/retry-finalization`);
+  return data;
+}
+
 export async function getPendingUploads(params = {}) {
-  const { page = 1, limit = 20, status = '' } = params;
+  const { page = 1, limit = 20, status = '', search = '' } = params;
   const queryParams = new URLSearchParams({
     page: String(page),
     limit: String(limit),
-    ...(status && { status })
+    ...(status && { status }),
+    ...(search && { search })
   });
   const { data } = await apiClient.get(`/controlled-upload/pending?${queryParams}`);
   return data;
@@ -41,4 +37,11 @@ export async function getPendingUploads(params = {}) {
 export async function getPendingUploadById(requestId) {
   const { data } = await apiClient.get(`/controlled-upload/pending/${requestId}`);
   return data.data;
+}
+
+export async function getPendingUploadPreviewBlob(requestId) {
+  const response = await apiClient.get(`/controlled-upload/pending/${requestId}/preview`, {
+    responseType: 'blob'
+  });
+  return response.data;
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -11,6 +11,8 @@ import {
   RefreshCcw,
   Search,
   ShieldCheck,
+  Shield,
+  Plus,
   UploadCloud,
   X
 } from 'lucide-react';
@@ -18,7 +20,9 @@ import { getOrganizationEvidence } from '../../api/evidence.js';
 import EvidenceTable from '../../components/EvidenceTable.jsx';
 import PageHeader from '../../components/ui/PageHeader.jsx';
 import { TableSkeleton } from '../../components/ui/Skeleton.jsx';
+import RequestViewAccessModal from '../../components/viewAccess/RequestViewAccessModal.jsx';
 import { formatBytes, formatDate, formatRelativeTime } from '../../utils/format.js';
+import { subscribeToViewAccessEvents } from '../../api/socket.js';
 
 const FILTER_OPTIONS = [
   { value: '', label: 'All Status' },
@@ -52,6 +56,8 @@ export default function OrgEvidence() {
   const [sortBy, setSortBy] = useState('createdAt');
   const [sortOrder, setSortOrder] = useState('desc');
   const [showFilters, setShowFilters] = useState(false);
+  const [showRequestModal, setShowRequestModal] = useState(false);
+  const [selectedEvidence, setSelectedEvidence] = useState(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['org-evidence', page, search, statusFilter, blockchainFilter, storageFilter, sortBy, sortOrder],
@@ -73,6 +79,13 @@ export default function OrgEvidence() {
   const totalPages = pagination.totalPages || 1;
 
   const hasActiveFilters = search || statusFilter || blockchainFilter || storageFilter;
+
+  useEffect(() => {
+    const unsub = subscribeToViewAccessEvents(() => {
+      refetch();
+    });
+    return () => unsub();
+  }, [refetch]);
 
   const handleFilterReset = () => {
     setSearch('');
@@ -99,7 +112,19 @@ export default function OrgEvidence() {
               <RefreshCcw size={14} className={isLoading ? 'animate-spin' : ''} />
               Refresh
             </button>
-            <Link to="/admin/dashboard" className="btn-primary">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => { setSelectedEvidence(null); setShowRequestModal(true); }}
+            >
+              <Shield size={14} />
+              Request View Access
+            </button>
+            <Link to="/admin/view-requests" className="btn-secondary">
+              <Eye size={14} />
+              View Access Requests
+            </Link>
+            <Link to="/admin/dashboard" className="btn-secondary">
               <UploadCloud size={15} />
               Dashboard
             </Link>
@@ -211,6 +236,7 @@ export default function OrgEvidence() {
               showGroup={true}
               showUploader={true}
               showTechnicalDetails={true}
+              onRequestAccess={(file) => { setSelectedEvidence(file); setShowRequestModal(true); }}
               emptyTitle="No organization evidence yet"
               emptyDescription="Evidence uploaded by members of your organization will appear here."
               emptyAction={
@@ -251,6 +277,22 @@ export default function OrgEvidence() {
           </>
         )}
       </section>
+
+      <RequestViewAccessModal
+        open={showRequestModal}
+        onClose={() => setShowRequestModal(false)}
+        initialTargetType="evidence"
+        initialTargetId={selectedEvidence?._id || ''}
+        initialTargetName={selectedEvidence?.fileName || ''}
+        initialOrgId={selectedEvidence?.organizationId?._id || selectedEvidence?.organizationId || ''}
+        lockedTarget={Boolean(selectedEvidence)}
+        targetCaseId={selectedEvidence?.caseId || ''}
+        targetGroupId={selectedEvidence?.groupId?._id || selectedEvidence?.groupId || ''}
+        targetGroupName={selectedEvidence?.groupId?.name || ''}
+        onSuccess={() => {
+          refetch();
+        }}
+      />
     </div>
   );
 }

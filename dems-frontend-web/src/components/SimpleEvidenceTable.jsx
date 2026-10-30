@@ -20,7 +20,7 @@ function getUploadStatus(file) {
 }
 
 function getVerificationStatus(file) {
-  if (file.blockchainStatus === 'confirmed' || file.blockchainTxHash) {
+  if (file.verification?.blockchainIntegrity === 'Verified' || file.blockchainStatus === 'confirmed' || file.blockchainTxHash) {
     return { status: 'verified', label: 'Verified', icon: ShieldCheck };
   }
   if (file.blockchainStatus === 'pending' || file.status === 'pending_blockchain') {
